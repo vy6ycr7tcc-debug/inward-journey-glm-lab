@@ -49,6 +49,7 @@ import { Genesis } from "./world/genesis";
 import { Touch } from "./world/touch";
 import { Depths, RUIN_NAMES, RUIN_SITES } from "./world/depths";
 import { Pyramid, DUAT_ORIGIN } from "./world/pyramid";
+import { DuatTour } from "./world/duatTour";
 import { Vision } from "./world/vision";
 import { Journey, JOURNEY_ORIGIN, inJourney, type Hall, type JourneyHost } from "./scenes/journey";
 import { AdeptMonument, adeptStages } from "./scenes/adept/monument";
@@ -2191,6 +2192,7 @@ function enterDuatCrossing(): void {
     follow.snapTo(player.pos);
     pyramid.duatActive = true;
     whisper("The Duat", 5000);
+    duatTour.enter(); // the tour of the night leads, from the door (item 8)
     window.setTimeout(() => {
       fadeEl.classList.remove("on");
       crossing = false;
@@ -2215,6 +2217,7 @@ function exitDuatWalkBack(): void {
     player.vel.set(0, 0, 0);
     follow.snapTo(player.pos);
     pyramid.duatActive = false;
+    duatTour.exit();
     window.setTimeout(() => {
       fadeEl.classList.remove("on");
       crossing = false;
@@ -2240,6 +2243,7 @@ function exitDuatDawn(): void {
     player.vel.set(0, 0, 0);
     follow.snapTo(player.pos);
     pyramid.duatActive = false;
+    duatTour.exit();
     whisper("Dawn", 5000);
     window.setTimeout(() => {
       fadeEl.classList.remove("on");
@@ -2885,6 +2889,8 @@ const tourScenes: TourScenes = initTourScenes({
 });
 // item 15: one companion for every tour — the guide orb itself leads the temple tour
 tourScenes.tour.guide = guide;
+/** The Duat's tour (item 8): the temple tour's automatic pattern, carried into the night. */
+const duatTour = new DuatTour(scene, player, follow, { whisper });
 // Lesson scenes are created above, AFTER the startup additiveKeepsAlpha pass (line ~263),
 // so their additive materials were never converted. Re-run to cover them: without this,
 // additive glow punches dark squares into the lakes' reflection texture.
@@ -2917,7 +2923,7 @@ function update(dt: number): void {
         if (!t) handfreePanel.hidden = true; // arrived
       }
     }
-    if (genesis.active || temple.cardsOpen || tourScenes.tour.active) player.update(dt, { x: 0, y: 0, glide: false, run: 0, hold: false, down: false, pitch: follow.pitch }, follow.yaw);
+    if (genesis.active || temple.cardsOpen || tourScenes.tour.active || duatTour.active) player.update(dt, { x: 0, y: 0, glide: false, run: 0, hold: false, down: false, pitch: follow.pitch }, follow.yaw);
     else if (autofly.active) {
       const r = autofly.update(dt, player.pos);
       Object.assign(player, { heading: r.heading, speed: r.speed, vy: r.vy, flying: true, landing: false, grounded: false, swimming: false, gliding: false, pose: "fly", target: null });
@@ -3084,6 +3090,7 @@ function update(dt: number): void {
   lessonDark.k *= 0.92; // held only while a lesson keeps asking for it
   templeFrame(dt);
   pyramidFrame(dt);
+  if (pyramid.duatActive) duatTour.update(dt); // the tour of the night leads while it is in the night
   journeyFrame(dt);
   busyFrame();
   calmFrame();
@@ -3213,7 +3220,15 @@ renderer
     shadersReady = true;
     quality.hold(3);
     endLoading();
-    if (shot?.id.startsWith("duat")) {
+    if (shot?.id === "duat-tour") {
+      // mid-tour in the night: entered, the tour already at stop k = t/40 (the door is 0)
+      duatVentured = false;
+      crossing = false;
+      setPyr(true);
+      pyramid.duatActive = true;
+      duatTour.enter(Math.max(0, Math.min(7, Math.round(shot.t / 40))), true);
+      pyramid.playerPos = player.pos;
+    } else if (shot?.id.startsWith("duat")) {
       duatVentured = false;
       crossing = false;
       setPyr(true);
@@ -3322,4 +3337,4 @@ function endLoading(): void {
   }, wait);
 }
 
-Object.assign(window, { __ij: { player, follow, quality, audio, narration, playlist, scene, S, wanderer, lanterns, flowers, landmarks, creation, spirits, beings, startMap, arrive, places, heightAt, communion, creatures, sitting, setMed: (v: number) => { medK = v; stillFor = 99; }, vessels, tp, post, renderer, camera, THREE, moods, fauna, presences, guide, terrain, water, grass, seaLife, lightField, blooms, input, archiveHeard, wilds, genesis, beginGenesis, autofly, setAutofly, temple, setInside, crossTemple, openCards, setCard, beginTempleRite, endTempleRite, kindled, touch, beginTouch, depths, setDeep, crossDeep, RUIN_SITES, pyramid, setPyr, crossPyr, vision, tourScenes, halls, densityHall, adeptHall, pastHall } });
+Object.assign(window, { __ij: { player, follow, quality, audio, narration, playlist, scene, S, wanderer, lanterns, flowers, landmarks, creation, spirits, beings, startMap, arrive, places, heightAt, communion, creatures, sitting, setMed: (v: number) => { medK = v; stillFor = 99; }, vessels, tp, post, renderer, camera, THREE, moods, fauna, presences, guide, terrain, water, grass, seaLife, lightField, blooms, input, archiveHeard, wilds, genesis, beginGenesis, autofly, setAutofly, temple, setInside, crossTemple, openCards, setCard, beginTempleRite, endTempleRite, kindled, touch, beginTouch, depths, setDeep, crossDeep, RUIN_SITES, pyramid, setPyr, crossPyr, vision, tourScenes, halls, densityHall, adeptHall, pastHall, duatTour } });

@@ -268,6 +268,12 @@ export function runShot(ctx: ShotCtx): void {
     if (!ctx.genesisAt) return;
     base = ctx.genesisAt(t);
     view = VIEWS.genesis;
+  } else if (id === "duat-tour") {
+    // mid-tour: over the walking wanderer's shoulder, the guide's light ahead (main.ts has
+    // entered the Duat and set the tour to its stop already)
+    const p = ctx.player.pos, fx = -Math.sin(ctx.player.heading), fz = -Math.cos(ctx.player.heading);
+    base = [p.x, p.y, p.z];
+    view = { eye: [-fx * 4.5, 2.6, -fz * 4.5], look: [fx * 6, 1.8, fz * 6] };
   } else if (/^duat-\d$/.test(id)) {
     // over the shoulder of the wanderer standing at hour k (main.ts places it), toward the vision
     const p = ctx.player.pos, fx = -Math.sin(ctx.player.heading), fz = -Math.cos(ctx.player.heading);
