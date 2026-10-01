@@ -21,6 +21,25 @@ import type { Narration } from "../world/sites";
 
 const ARC = 232.5; // the half-moon's curve, in its own units
 
+/** A living session bound to the same half-moon (item 13): a seated narration or a guided tour.
+    The controller stays one controller — its play/pause, back and next now drive the session,
+    and pausing truly pauses: the voice, the animation's narration clock and the tour's
+    auto-advance all freeze together, and resume picks up exactly where it left off. */
+export interface LiveNarration {
+  title(): string;
+  caption(): string;
+  playing(): boolean;
+  pause(): void;
+  resume(): void;
+  /** Back 15 s rides along where the session's clock can seek; false hides the button. */
+  canBack(): boolean;
+  back(seconds: number): void;
+  /** On to the next stop/room now, if the session has a next; otherwise the button hides. */
+  skip?: () => void;
+  /** 0–1 for the half-moon's arc; null and the arc rests empty. */
+  progress(): number | null;
+}
+
 export class TranscriptPlayer {
   current: Narration | null = null;
   /** The player is showing (playing or paused). */
@@ -58,6 +77,9 @@ export class TranscriptPlayer {
   private nextTimer = 0;
   private cues: { t: number; text: string }[] = [];
   private cueIndex = -1;
+  /** The living session wearing the half-moon (item 13), if any and if the archive's own
+      player is not using it. */
+  private live: LiveNarration | null = null;
 
   constructor(private audio: AudioEngine) {
     this.media.preload = "none";
@@ -81,10 +103,23 @@ export class TranscriptPlayer {
       });
       el.addEventListener("click", (e) => e.detail === 0 && fn());
     };
-    const toggle = () => (this.playing ? this.pause() : this.current ? this.resume() : this.startFirst());
+    const toggle = () => {
+      if (this.live && !this.current) {
+        this.live.playing() ? this.live.pause() : this.live.resume();
+        this.showPlaying(this.live.playing());
+        return;
+      }
+      return this.playing ? this.pause() : this.current ? this.resume() : this.startFirst();
+    };
     tap("tp-pause", toggle);
-    tap("tp-back", () => this.back(15));
-    tap("tp-next", () => this.skip());
+    tap("tp-back", () => {
+      if (this.live && !this.current && this.live.canBack()) return this.live.back(15);
+      return this.back(15);
+    });
+    tap("tp-next", () => {
+      if (this.live && !this.current && this.live.skip) return this.live.skip();
+      return this.skip();
+    });
     tap("tp-fold", () => this.fold());
     tap("tp-quiet", () => {
       this.setQuiet(!this.quiet);
@@ -92,8 +127,14 @@ export class TranscriptPlayer {
       this.onQuiet?.(this.quiet);
     });
     tap("tp-mini-play", toggle);
-    tap("tp-mini-back", () => this.back(15));
-    tap("tp-mini-next", () => this.skip());
+    tap("tp-mini-back", () => {
+      if (this.live && !this.current && this.live.canBack()) return this.live.back(15);
+      return this.back(15);
+    });
+    tap("tp-mini-next", () => {
+      if (this.live && !this.current && this.live.skip) return this.live.skip();
+      return this.skip();
+    });
     tap("tp-mini-open", () => this.unfold());
     document.getElementById("tp-close")!.addEventListener("click", () => this.close());
     document.getElementById("tp-src")!.addEventListener("click", () => this.showSource(true));
@@ -214,6 +255,45 @@ export class TranscriptPlayer {
     this.close();
   }
 
+  /** The half-moon takes on a living session (item 13): a seated narration or a guided tour
+      wears the same controller. Inert while the archive's own player holds the half-moon. */
+  private liveState = "";
+  bindLive(live: LiveNarration): void {
+    if (this.current) return; // the archive is playing: the half-moon is already theirs
+    const state = `${live.title()}|${live.playing()}|${live.canBack()}|${live.skip ? 1 : 0}`;
+    const same = this.live === live;
+    this.live = live;
+    if (same && state === this.liveState) return; // nothing new to draw
+    this.liveState = state;
+    this.titleEl.textContent = live.title();
+    this.captionEl.replaceChildren(document.createTextNode(live.caption()));
+    this.pauseBtn.textContent = live.playing() ? "Pause" : "Resume";
+    for (const id of ["tp-back", "tp-next", "tp-src"] as const) {
+      const b = document.getElementById(id)!;
+      b.hidden = id === "tp-src" || (id === "tp-back" && !live.canBack()) || (id === "tp-next" && !live.skip);
+    }
+    if (this.mini.hidden) {
+      this.mini.hidden = false;
+      this.mini.classList.remove("idle");
+      this.el.hidden = true;
+    }
+    this.showPlaying(live.playing());
+    if (!same) this.arc.style.strokeDashoffset = String(ARC);
+  }
+
+  /** The session is over (or the archive player needs the half-moon back). `live` is the
+      session asking — a stale one never pulls the half-moon off the session wearing it. */
+  unbindLive(live: LiveNarration): void {
+    if (this.live !== live) return;
+    this.live = null;
+    this.liveState = "";
+    if (!this.current) {
+      this.mini.hidden = true;
+      this.el.hidden = true;
+      this.setResting(this.resting);
+    }
+  }
+
   private ended(): void {
     const n = this.current && this.next?.(this.current);
     this.sub.classList.remove("on");
@@ -249,6 +329,15 @@ export class TranscriptPlayer {
 
   unfold(): void {
     window.clearTimeout(this.foldTimer);
+    if (this.live && !this.current) {
+      // the session's card: the same controls carrying the session's words
+      this.pauseBtn.textContent = this.live.playing() ? "Pause" : "Resume";
+      for (const id of ["tp-back", "tp-next", "tp-src"] as const)
+        document.getElementById(id)!.hidden = id === "tp-src" || (id === "tp-back" && !this.live.canBack()) || (id === "tp-next" && !this.live.skip);
+      this.el.hidden = false;
+      this.mini.hidden = true;
+      return;
+    }
     if (!this.current) {
       // nothing playing: the card offers to begin, or to keep only nature's sounds
       this.titleEl.textContent = "The archive's voices";
@@ -325,6 +414,11 @@ export class TranscriptPlayer {
 
   /** Each frame: subtitles in step with the voice, the half-moon's progress, the lock screen's. */
   update(): void {
+    if (this.live && !this.current) {
+      const p = this.live.progress();
+      if (!this.mini.hidden && p !== null) this.arc.style.strokeDashoffset = String(ARC * (1 - Math.min(1, Math.max(0, p))));
+      return;
+    }
     if (!this.current) return;
     const t = this.media.currentTime, dur = this.media.duration;
     if (isFinite(dur) && dur > 0) {

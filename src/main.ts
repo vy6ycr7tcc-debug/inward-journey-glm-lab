@@ -9,7 +9,7 @@ import { registerSW } from "virtual:pwa-register";
 import * as THREE from "three/webgpu";
 import { AudioEngine } from "./core/audio";
 import { Input } from "./core/input";
-import { Narration } from "./core/narration";
+import { Narration, TRACKS } from "./core/narration";
 import { Playlist } from "./core/playlist";
 import { RITES, riteAudio, SYNTHESES, synthAudio } from "./world/rites";
 import { SIGNATURES } from "./player/gestures";
@@ -38,7 +38,7 @@ import { ARCHIVE, GROVE_SITES, ORB_SITES } from "./world/sites";
 import { Communion } from "./world/communion";
 import { Creatures } from "./world/creatures";
 import { Vessels } from "./world/vessels";
-import { TranscriptPlayer } from "./ui/transcriptPlayer";
+import { TranscriptPlayer, type LiveNarration } from "./ui/transcriptPlayer";
 import { StartMap, type Choice, type Place } from "./ui/map";
 import { buildSky, skyUniforms, starDirection } from "./world/sky";
 import { floorHook, groundUniforms, heightAt, LANDMARK_SITES, MONUMENT, PEAKS, SPAWN, Terrain, WATER_Y } from "./world/terrain";
@@ -1433,6 +1433,61 @@ function updateSitting(dt: number): void {
 
 /* ---- The archive's narrations: started only by the player, one quiet card, never a modal ---- */
 const tp = new TranscriptPlayer(audio);
+
+/* ---------- item 13: one controller for every seated narration and every tour ----------
+   The half-moon the archive uses is the same one these sessions wear: pausing pauses the
+   voice, the animation's narration clock and the tour's auto-advance together (the clock
+   itself stands still — core/narration), and resume picks up the very second it held. */
+let boundLive: LiveNarration | null = null;
+let walkUiTitle = "";
+const narrationPart = () => {
+  const p = narration.progress();
+  return p ? p.t / p.total : null;
+};
+const tourHost: LiveNarration = {
+  title: () => tourScenes.tour.stopTitle,
+  caption: () => "The temple tour",
+  playing: () => !narration.paused && narration.current === "TEMPLE",
+  pause: () => narration.pause(),
+  resume: () => narration.resume(),
+  canBack: () => !!narration.current,
+  back: (s) => narration.back(s),
+  skip: () => tourScenes.tour.skip(),
+  progress: narrationPart,
+};
+const walkHost: LiveNarration = {
+  title: () => walkUiTitle,
+  caption: () => "A walk through the monuments",
+  playing: () => !narration.paused && !!narration.current,
+  pause: () => narration.pause(),
+  resume: () => narration.resume(),
+  canBack: () => !!narration.current,
+  back: (s) => narration.back(s),
+  skip: () => walkSkip(),
+  progress: narrationPart,
+};
+/** Every seated narration: the island lessons, the density rooms, the adept stations, the
+    Past Choices rooms, the standalone visions, the Choice room — the controller knows them
+    by the track that is playing. */
+const seatedHost: LiveNarration = {
+  title: () => (narration.current ? TRACKS[narration.current]?.title ?? "" : ""),
+  caption: () => "A narration",
+  playing: () => !narration.paused && !!narration.current,
+  pause: () => narration.pause(),
+  resume: () => narration.resume(),
+  canBack: () => !!narration.current,
+  back: (s) => narration.back(s),
+  progress: narrationPart,
+};
+function syncLivePlayer(): void {
+  let host: LiveNarration | null = null;
+  if (tourScenes.tour.active) host = tourHost;
+  else if (walk) host = walkHost;
+  else if (sitting.phase === "seated" && narration.current) host = seatedHost;
+  if (host) tp.bindLive(host);
+  else if (boundLive) tp.unbindLive(boundLive);
+  boundLive = host;
+}
 function playArchive(n: Parameters<TranscriptPlayer["play"]>[0]): void {
   narration.stop(1.5); // the journey's voice or an archetype's answer makes way
   playlist.held = true;
@@ -1663,6 +1718,7 @@ for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"
     lastTouch = performance.now();
   }, { capture: true, passive: true });
 function calmFrame(): void {
+  if (shot) return; // a still shows the world as it is, controls and all
   const idle = performance.now() - lastTouch > 4500 && Math.hypot(input.move.x, input.move.y) < 0.05 && !input.hold;
   const want = S.mode === "play" && !startMap.isOpen && $("#menu").hidden && (autofly.active || idle);
   if (want === calm) return;
@@ -1890,6 +1946,7 @@ const walkPanel = Object.assign(document.createElement("div"), { id: "walk-panel
 }
 let walk: { id: string; label: string; stops: WalkStop[]; i: number; phase: "enter" | "listen" | "linger" | "go"; t: number; heard: boolean } | null = null;
 const walkTitle = (t: string, hint: string) => {
+  walkUiTitle = t; // the half-moon's card reads it too (item 13)
   (walkPanel.querySelector(".title") as HTMLElement).textContent = t;
   (walkPanel.querySelector(".hint") as HTMLElement).textContent = hint;
 };
@@ -1951,7 +2008,8 @@ const walkTo = new THREE.Vector2();
 function walkFrame(dt: number): void {
   if (!walk) return;
   const s = walk.stops[walk.i], j = halls[s.hall].journey;
-  walk.t += dt;
+  // a paused session holds: none of the room's timers run while the voice stands still (item 13)
+  if (!((walk.phase === "listen" || walk.phase === "linger") && narration.paused)) walk.t += dt;
   if (walk.phase === "enter") {
     if (j.inside && !j.crossing && j.at === s.stage) {
       walk.phase = "listen";
@@ -2867,6 +2925,7 @@ function update(dt: number): void {
   if (world) vessels.update(wt, player.pos, camera, S.reduced, S.mode === "play" && !startMap.isOpen);
   tp.subtitlesOn = narration.subtitlesOn;
   tp.update();
+  syncLivePlayer(); // the half-moon wears whichever session is alive (item 13)
   if (world) updateStillness(dt, wt);
   if (S.mode === "play") {
     const letGo = Math.hypot(input.move.x, input.move.y) > 0.2 || input.hold || (touch.phase === "touching" && !!player.target) ||

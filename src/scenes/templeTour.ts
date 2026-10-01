@@ -367,6 +367,16 @@ export class TempleTour implements SceneModule {
     this.go(this.index + 1);
   }
 
+  /** The half-moon's "next" (item 13): on to the next stop now. */
+  skip(): void {
+    this.next();
+  }
+
+  /** The stop the tour stands at, for the controller's card. */
+  get stopTitle(): string {
+    return this.stops[this.index]?.title ?? "";
+  }
+
   /** Where the light waits for a stop: a little before the shrine, above the standing place. */
   private waitPoint(s: Stop): THREE.Vector2 {
     const O = TEMPLE_ORIGIN;
@@ -482,8 +492,9 @@ export class TempleTour implements SceneModule {
         this.refresh();
       }
     }
-    // a breath of quiet after the words, then the light glides on to the next shrine
-    if (this.phase === "done") {
+    // a breath of quiet after the words, then the light glides on to the next shrine —
+    // but a paused session holds: nothing moves on while the visitor has paused (item 13)
+    if (this.phase === "done" && !this.narration.paused) {
       this.dwell += step;
       if (this.dwell >= DWELL) {
         if (this.index >= this.stops.length - 1) {
