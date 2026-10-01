@@ -48,7 +48,7 @@ import { Autofly } from "./player/autofly";
 import { Genesis } from "./world/genesis";
 import { Touch } from "./world/touch";
 import { Depths, RUIN_NAMES, RUIN_SITES } from "./world/depths";
-import { Pyramid, DUAT_ORIGIN } from "./world/pyramid";
+import { Pyramid, DUAT_ORIGIN, PYR_ORIGIN } from "./world/pyramid";
 import { Vision } from "./world/vision";
 import { Journey, JOURNEY_ORIGIN, inJourney, type Hall, type JourneyHost } from "./scenes/journey";
 import { AdeptMonument, adeptStages } from "./scenes/adept/monument";
@@ -3230,6 +3230,28 @@ renderer
       player.vel.set(0, 0, 0);
       follow.snapTo(player.pos);
       pyramid.duatActive = true;
+      pyramid.playerPos = player.pos;
+    } else if (shot?.id.startsWith("pyr-")) {
+      // the pyramid's chambers, from within: entered, then stood where the still stands —
+      // never on the coffer nor the Queen's centre, so no rite wakes for the camera
+      crossing = false;
+      setPyr(true);
+      for (const k of ["near", "pit", "queen", "gallery", "king"]) toldPyr.add(k); // the stills stay clean of the chamber lines
+      const AT: Record<string, [number, number]> = {
+        "pyr-entry": [0, 20.5],
+        "pyr-pit": [-25.4, 11.6],
+        "pyr-queen": [0, 39.2],
+        "pyr-gallery": [6.5, 15.2],
+        "pyr-king": [41.6, 17.4],
+      };
+      const at = AT[shot.id] ?? AT["pyr-entry"];
+      const wx = PYR_ORIGIN.x + at[0], wz = PYR_ORIGIN.z + at[1];
+      player.pos.set(wx, pyramid.floorAt(wx, wz), wz);
+      player.heading = Math.PI;
+      follow.yaw = Math.PI;
+      Object.assign(player, { flying: false, landing: false, grounded: true, swimming: false, vy: 0, target: null });
+      player.vel.set(0, 0, 0);
+      follow.snapTo(player.pos);
       pyramid.playerPos = player.pos;
     } else if (shot?.id === "pyramid") {
       const dx = pyramid.door.x;

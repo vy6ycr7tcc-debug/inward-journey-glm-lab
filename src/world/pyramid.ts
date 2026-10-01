@@ -17,10 +17,15 @@
      where the senses rest so that, in a sense, another life begins (3.16, 56.3); the Grand
      Gallery; the King's Chamber, the place of healing, where light moves through in seven
      colours (56.3, 57.12), with the coffer and a crystal (2.4).
+   - The rooms are dressed as built masonry (the interior pass): a plinth, dado and cornice on
+     every wall, pilasters in the long chambers, benches in the gallery, a false door in the
+     Queen's; the game's scanned stone — colour, normals, occlusion — brought within; braziers
+     whose warm light breathes, shafts of light falling from above, and the King's Chamber
+     glowing when its rite wakes.
    - Ra later called such shapes training wheels, no longer needed (60.13, 60.16).
    Outside you can climb its faces to the apex (terrain.ts `standAt`). */
 import * as THREE from "three/webgpu";
-import { T, worldPoints, type N } from "../gpu/tsl";
+import { T, hash2, vnoise, worldPoints, type N } from "../gpu/tsl";
 import { scan, type ScanName } from "./temple";
 import { PYRAMID } from "./terrain";
 import { Duat, DUAT_PATH, duatHeight } from "./duat";
@@ -62,26 +67,88 @@ function limestone(uT: N, tint: [number, number, number], alive = 1, tile = 2.4)
   m.emissiveNode = vec3(1.0, 0.8, 0.5).mul(joint.mul(wave.mul(0.18).add(beat.mul(0.08)).mul(alive))).add(c.mul(0.05));
   return m;
 }
-/** Rose granite (the capstone, the King's Chamber, the coffer): dark, flecked, with crystal glints. */
-function granite(uT: N): THREE.MeshStandardNodeMaterial {
+/** Rose granite (the capstone, the King's Chamber, the coffer): dark, flecked, with crystal
+    glints. `tint` recolours (the dressed pieces within are cut deeper); `awake` adds an
+    emissive term — the King's Chamber glowing when its rite wakes. */
+function granite(uT: N, tint: [number, number, number] = [0.72, 0.46, 0.44], awake?: N): THREE.MeshStandardNodeMaterial {
   const m = new THREE.MeshStandardNodeMaterial({ metalness: 0.05, roughness: 0.5 });
   const { col } = triplanar("red_sandstone_pavement", 1.6);
   const pw = T.positionWorld;
   const h = (p: N) => fract(sin(T.dot(p, vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
   const cell = floor(pw.mul(26));
   const fleck = h(cell);
-  const c = col.mul(vec3(0.72, 0.46, 0.44)).mul(fleck.lessThan(0.18).select(float(0.45), fleck.greaterThan(0.9).select(float(1.6), float(1))));
+  const c = col.mul(vec3(...tint)).mul(fleck.lessThan(0.18).select(float(0.45), fleck.greaterThan(0.9).select(float(1.6), float(1))));
   m.colorNode = vec4(c, 1);
   const glint = smoothstep(0.994, 1.0, h(cell.add(7))).mul(sin(uT.mul(1.7).add(fleck.mul(40))).mul(0.5).add(0.5));
-  m.emissiveNode = vec3(1.0, 0.9, 0.8).mul(glint.mul(0.9)).add(c.mul(0.04));
+  m.emissiveNode = vec3(1.0, 0.9, 0.8).mul(glint.mul(0.9)).add(c.mul(0.04)).add(awake ? awake : float(0));
   return m;
 }
-function crystalGlow(uT: N): THREE.MeshBasicNodeMaterial {
+function crystalGlow(uT: N, boost?: N): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, fog: false });
   const V0 = T.normalize(T.cameraPosition.sub(T.positionWorld));
   const ndv = T.max(T.dot(T.normalWorld, V0), 0);
   const film = cos(vec3(ndv.mul(1.5).add(uT.mul(0.05))).add(vec3(0, 0.33, 0.67)).mul(6.28)).mul(0.5).add(0.5);
-  m.colorNode = vec4(film.mul(T.pow(float(1).sub(ndv), 1.5).mul(0.8).add(0.15)), 1);
+  // a lit crystal, warmed, with only a hint of the film's iridescence (full spectrum reads as a glitch)
+  const k = T.mix(vec3(1.0, 0.85, 0.6), film, float(0.3)).mul(T.pow(float(1).sub(ndv), 1.5).mul(0.8).add(0.15));
+  m.colorNode = vec4(boost ? k.mul(boost.mul(0.5).add(0.75)) : k, 1);
+  return m;
+}
+
+/** The interior lining (the interior pass): the game's stone texturing brought within — the
+    scanned blocks with their normals and packed occlusion, laid in dressed courses metred
+    like the casing's (level joints every 1.3 m, uprights staggered every 1.8): every block
+    its own value, the joints chamfered dark as a cut edge catches the dark before its face,
+    streaks and broad patches of weathering, soot toward the deep floor — and the courses
+    still carrying the living light, warmer within. `fleck` adds the granite's crystal
+    glints (the King's Chamber and the ante, cut in rose stone); `awake` an emissive term
+    (the King's Chamber glowing when its rite wakes). */
+function lining(uT: N, tint: [number, number, number], alive = 1.2, opts: { fleck?: boolean; awake?: N } = {}): THREE.MeshStandardNodeMaterial {
+  const m = new THREE.MeshStandardNodeMaterial({ metalness: 0, roughness: 0.82 });
+  const S = scan("sandstone_blocks_05");
+  const pw = T.positionWorld, n = T.normalWorldGeometry;
+  const wp = T.pow(abs(n), vec3(4));
+  const w = wp.div(wp.x.add(wp.y).add(wp.z));
+  const tile = 1.7;
+  const at = (t: THREE.Texture, p: N) => T.texture(t, p.div(tile));
+  const arm = at(S.arm, pw.zy).mul(w.x).add(at(S.arm, pw.xz).mul(w.y)).add(at(S.arm, pw.xy).mul(w.z));
+  const c = at(S.diff, pw.zy).rgb.mul(w.x).add(at(S.diff, pw.xz).rgb.mul(w.y)).add(at(S.diff, pw.xy).rgb.mul(w.z)).mul(vec3(...tint));
+  // the casing's own course measures, metred from the room's stone
+  const cy = fract(pw.y.div(1.3));
+  const row = floor(pw.y.div(1.3));
+  const along = pw.x.add(pw.z).add(row.mul(0.9));
+  const cu = fract(along.div(1.8));
+  const bv = hash2(vec2(floor(along.div(1.8)), row)).mul(0.16).add(0.92); // no two blocks alike
+  const dH = cy.min(float(1).sub(cy)).mul(1.3);
+  const dV = cu.min(float(1).sub(cu)).mul(1.8).mul(float(1).sub(w.y));
+  const chamfer = smoothstep(0.09, 0.02, dH).max(smoothstep(0.06, 0.015, dV));
+  // weathering: streaks run down, broad patches, soot toward the deep rooms' floor
+  const ly = pw.y.sub(float(PYR_ORIGIN.y));
+  const grime = T.mix(float(0.8), float(1), smoothstep(float(-9), float(-1.5), ly));
+  const streak = T.mix(float(0.86), float(1), vnoise(vec2(pw.x.add(pw.z).mul(1.3), ly.mul(0.11))));
+  const patch = T.mix(float(0.88), float(1.06), vnoise(pw.xz.add(vec2(pw.y, pw.y)).mul(0.2)));
+  m.colorNode = vec4(c.mul(bv).mul(float(1).sub(chamfer.mul(0.38))).mul(T.mix(float(0.55), float(1), arm.r)).mul(grime).mul(streak).mul(patch), 1);
+  // the scan's tooth, triplanar like the colour: each plane's frame is its own axes (the
+  // shells are unrotated, so a world normal may pass straight to view)
+  const rm = (s: N) => s.rgb.mul(2).sub(1);
+  const sX = rm(at(S.nor, pw.zy)), sY = rm(at(S.nor, pw.xz)), sZ = rm(at(S.nor, pw.xy));
+  const nW = vec3(sX.z, sX.y, sX.x).mul(w.x).add(vec3(sY.x, sY.z, sY.y).mul(w.y)).add(vec3(sZ.x, sZ.y, sZ.z).mul(w.z));
+  m.normalNode = T.transformNormalToView(T.normalize(nW));
+  m.roughnessNode = T.clamp(arm.g, 0.45, 1);
+  // the living light, warmer within
+  const jH = smoothstep(0.03, 0.0, cy.sub(0.5).abs().sub(0.47).abs());
+  const jV = smoothstep(0.02, 0.0, cu.sub(0.5).abs().sub(0.48).abs()).mul(float(1).sub(w.y));
+  const joint = jH.max(jV);
+  const wave = sin(pw.y.mul(0.35).sub(uT.mul(0.9))).mul(0.5).add(0.5);
+  const beat = T.pow(sin(uT.mul(1.1)).mul(0.5).add(0.5), 6);
+  let em: N = vec3(1.0, 0.76, 0.46).mul(joint.mul(wave.mul(0.15).add(beat.mul(0.07)).mul(alive))).add(c.mul(0.045));
+  if (opts.fleck) {
+    const h = (p: N) => fract(sin(T.dot(p, vec3(12.9898, 78.233, 37.719))).mul(43758.5453));
+    const cell = floor(pw.mul(26));
+    const glint = smoothstep(0.994, 1.0, h(cell.add(7))).mul(sin(uT.mul(1.7).add(h(cell).mul(40))).mul(0.5).add(0.5));
+    em = em.add(vec3(1.0, 0.9, 0.8).mul(glint.mul(0.5)));
+  }
+  if (opts.awake) em = em.add(opts.awake);
+  m.emissiveNode = em;
   return m;
 }
 
@@ -243,7 +310,7 @@ export function entranceGeometry(half: number, ht: number): {
 }
 
 /* ---------------------------------------------------------------- rooms, from the inside */
-interface Room {
+export interface Room {
   name: string;
   x0: number; x1: number; z0: number; z1: number;
   /** floor at x0 and at x1 (rooms slope only along x) */
@@ -255,7 +322,7 @@ interface Room {
   gable?: number;
   corbel?: boolean;
 }
-const ROOMS: Room[] = [
+export const ROOMS: Room[] = [
   { name: "entry", x0: -1.6, x1: 1.6, z0: 0, z1: 22, f0: 0, f1: 0, h: 3.6, open: [
     { wall: "n", a: -1.2, b: 1.2, top: 3 }, { wall: "w", a: 6, b: 9.4, top: 3 }, { wall: "e", a: 13.8, b: 17.6, top: 3.4 }, { wall: "s", a: -1.2, b: 1.2, top: 2.6 }] },
   { name: "descent", x0: -22, x1: -1.6, z0: 6, z1: 9.4, f0: -9, f1: 0, h: 3.2, open: [
@@ -270,13 +337,13 @@ const ROOMS: Room[] = [
     { wall: "w", a: 14.2, b: 17.2, top: 3 }, { wall: "e", a: 14.2, b: 17.2, top: 3 }] },
   { name: "king", x0: 37, x1: 47.5, z0: 12.6, z1: 18.8, f0: 13, f1: 13, h: 5.8, granite: true, open: [{ wall: "w", a: 14.2, b: 17.2, top: 3 }] },
 ];
-const floorOf = (r: Room, x: number) => r.f0 + (r.f1 - r.f0) * THREE.MathUtils.clamp((x - r.x0) / (r.x1 - r.x0), 0, 1);
+export const floorOf = (r: Room, x: number) => r.f0 + (r.f1 - r.f0) * THREE.MathUtils.clamp((x - r.x0) / (r.x1 - r.x0), 0, 1);
 const COFFER = new V(39.6, 13, 15.7); // local, in the King's Chamber, toward its west end
 const PIT = new V(-28, -9, 7.7); // the open floor of the resonating chamber
 const QUEEN = new V(0, 0, 42.7);
 
 /** Quads facing into the room (drawn from inside, so from outside they vanish: the camera sees in). */
-class Shell {
+export class Shell {
   pos: number[] = [];
   quad(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, inward: THREE.Vector3): void {
     const n = new V().subVectors(b, a).cross(new V().subVectors(d, a));
@@ -362,6 +429,236 @@ function buildRoom(r: Room, sh: Shell): void {
   }
 }
 
+/* ------------------------------------------------- dressed masonry within (the interior pass) */
+/** Where a wall stands and which way it faces in: `fixed` is the wall's own coordinate (z for
+    the n/s walls, x for the w/e), `alongX` whether its run runs along x. */
+export interface WallRef { fixed: number; inDir: 1 | -1; alongX: boolean }
+export const wallOf = (r: Room, which: "n" | "s" | "w" | "e"): WallRef =>
+  which === "n" ? { fixed: r.z0, inDir: 1, alongX: true }
+  : which === "s" ? { fixed: r.z1, inDir: -1, alongX: true }
+  : which === "w" ? { fixed: r.x0, inDir: 1, alongX: false }
+  : { fixed: r.x1, inDir: -1, alongX: false };
+
+/** One wall's bare runs: the spans between its openings (walls from the floor) and the spans
+    above them (walls from the opening's top), {a,b} along the wall, `lo` the height the wall
+    starts at. The same walk buildRoom cuts the walls by. */
+export function wallRuns(r: Room, which: "n" | "s" | "w" | "e"): { a: number; b: number; lo: number }[] {
+  const ops = r.open.filter((o) => o.wall === which).sort((p, q) => p.a - q.a);
+  const alongX = which === "n" || which === "s";
+  const from = alongX ? r.x0 : r.z0, to = alongX ? r.x1 : r.z1;
+  const runs: { a: number; b: number; lo: number }[] = [];
+  let c = from;
+  for (const o of ops) {
+    if (o.a - c >= 0.01) runs.push({ a: c, b: o.a, lo: 0 });
+    runs.push({ a: o.a, b: o.b, lo: o.top });
+    c = o.b;
+  }
+  if (to - c >= 0.01) runs.push({ a: c, b: to, lo: 0 });
+  return runs;
+}
+
+const DADO0 = 0.9, DADO1 = 1.7; // the dado band, and its fillet crowning it
+const CORN1 = 0.42, CORN2 = 0.21; // the cornice's two steps, measured down from the ceiling
+const PIER = { w: 0.85, p: 0.1, wideP: 0.16, capH: 0.22, baseH: 0.25 }; // shaft, base, cap
+
+/** A proud band (or step) on one wall run: its face into the room, ledges where it steps
+    back (`topTo`/`botTo`, the depth they step TO), end caps when its ends can be seen. */
+function proudBand(sh: Shell, r: Room, wall: WallRef, run: { a: number; b: number }, y0: number, y1: number, p: number, opts: { topTo?: number; botTo?: number; caps?: boolean } = {}): void {
+  if (run.b - run.a < 0.01) return;
+  const off = (d: number) => wall.fixed + wall.inDir * d;
+  const P = (u: number, y: number, d: number): THREE.Vector3 => (wall.alongX ? new V(u, y, off(d)) : new V(off(d), y, u));
+  const fAt = (u: number) => (wall.alongX ? floorOf(r, u) : floorOf(r, wall.fixed));
+  const inward = wall.alongX ? new V(0, 0, wall.inDir) : new V(wall.inDir, 0, 0);
+  const fa = fAt(run.a), fb = fAt(run.b);
+  sh.quad(P(run.a, fa + y0, p), P(run.b, fb + y0, p), P(run.b, fb + y1, p), P(run.a, fa + y1, p), inward);
+  if (opts.topTo !== undefined && opts.topTo < p)
+    sh.quad(P(run.a, fa + y1, p), P(run.b, fb + y1, p), P(run.b, fb + y1, opts.topTo), P(run.a, fa + y1, opts.topTo), new V(0, 1, 0));
+  if (opts.botTo !== undefined && opts.botTo < p)
+    sh.quad(P(run.a, fa + y0, opts.botTo), P(run.b, fb + y0, opts.botTo), P(run.b, fb + y0, p), P(run.a, fa + y0, p), new V(0, -1, 0));
+  if (opts.caps)
+    for (const [u, dir] of [[run.a, 1], [run.b, -1]] as const) {
+      const along = wall.alongX ? new V(dir, 0, 0) : new V(0, 0, dir);
+      const fu = fAt(u); // the cap stands on its own end's floor (rooms slope along x)
+      sh.quad(P(u, fu + y0, 0), P(u, fu + y1, 0), P(u, fu + y1, p), P(u, fu + y0, p), along);
+    }
+}
+
+/** An engaged pier on one wall: base and cap cut wider than the shaft (Tuscan, in stone). */
+function pier(sh: Shell, r: Room, wall: WallRef, centre: number): void {
+  const h = r.h;
+  const run = { a: centre - PIER.w / 2, b: centre + PIER.w / 2 };
+  proudBand(sh, r, wall, run, DADO1, DADO1 + PIER.baseH, PIER.wideP, { topTo: PIER.p, caps: true });
+  proudBand(sh, r, wall, run, DADO1 + PIER.baseH, h - CORN1 - PIER.capH, PIER.p, { caps: true });
+  proudBand(sh, r, wall, run, h - CORN1 - PIER.capH, h - CORN1, PIER.wideP, { botTo: PIER.p, caps: true });
+}
+
+/** Piers stand in the long rooms, evenly spaced, none where an opening cuts the wall. */
+export function pierSpots(r: Room, which: "n" | "s" | "w" | "e"): number[] {
+  const alongX = which === "n" || which === "s";
+  const L = alongX ? r.x1 - r.x0 : r.z1 - r.z0;
+  if (r.corbel || r.gable || L < 7 || Math.min(r.x1 - r.x0, r.z1 - r.z0) < 4.5) return [];
+  const out: number[] = [];
+  for (const run of wallRuns(r, which)) {
+    if (run.lo > 0 || run.b - run.a < 7) continue; // only bare walls from the floor
+    const m = 1.0, n = Math.max(2, Math.round((run.b - run.a) / 4.2));
+    for (let i = 0; i < n; i++) {
+      const c = run.a + m + ((i + 0.5) * (run.b - run.a - 2 * m)) / n;
+      if (c - PIER.w / 2 > run.a + 0.3 && c + PIER.w / 2 < run.b - 0.3) out.push(c);
+    }
+  }
+  return out;
+}
+
+/** The interior dressing (the interior pass): dressed stone laid proud of every wall — a
+    plinth at its foot, a dado band with its fillet, a two-step cornice at its top, piers in
+    the long chambers, benches along the gallery, a false door in the Queen's. All of it
+    stands inside the room's bounds; nothing floats, nothing blocks an opening. Pure
+    geometry, so the tests can hold it to that. */
+export function dressRoom(r: Room, trim: Shell): void {
+  for (const which of ["n", "s", "w", "e"] as const) {
+    const wall = wallOf(r, which);
+    for (const run of wallRuns(r, which)) {
+      if (run.lo === 0) {
+        proudBand(trim, r, wall, run, 0, 0.28, 0.09); // the plinth
+        proudBand(trim, r, wall, run, DADO0, DADO1, 0.06); // the dado
+        proudBand(trim, r, wall, run, DADO1, DADO1 + 0.08, 0.1, { botTo: 0.06 }); // its fillet
+      }
+      if (!r.corbel && run.lo < r.h - CORN1) {
+        proudBand(trim, r, wall, run, r.h - CORN1, r.h - CORN2, 0.18, { topTo: 0.09, caps: true });
+        proudBand(trim, r, wall, run, r.h - CORN2, r.h, 0.09, { topTo: 0, caps: true });
+      }
+    }
+    for (const c of pierSpots(r, which)) pier(trim, r, wall, c);
+  }
+  if (r.corbel) {
+    // the gallery's benches, low on each wall, clear of the doorways at both ends
+    for (const which of ["n", "s"] as const) {
+      const wall = wallOf(r, which);
+      const a = 3.5, b = 32.5, d = 0.7, bh = 0.55;
+      const off = (dd: number) => wall.fixed + wall.inDir * dd;
+      const inward = new V(0, 0, wall.inDir);
+      trim.quad(new V(a, floorOf(r, a) + bh, off(d)), new V(b, floorOf(r, b) + bh, off(d)), new V(b, floorOf(r, b) + bh, off(0)), new V(a, floorOf(r, a) + bh, off(0)), new V(0, 1, 0));
+      trim.quad(new V(a, floorOf(r, a), off(d)), new V(b, floorOf(r, b), off(d)), new V(b, floorOf(r, b) + bh, off(d)), new V(a, floorOf(r, a) + bh, off(d)), inward);
+      for (const [u, dir] of [[a, -1], [b, 1]] as const)
+        trim.quad(new V(u, floorOf(r, u), off(0)), new V(u, floorOf(r, u) + bh, off(0)), new V(u, floorOf(r, u) + bh, off(d)), new V(u, floorOf(r, u), off(d)), new V(dir, 0, 0));
+    }
+  }
+  if (r.name === "queen") {
+    // the false door on the east wall: jambs, lintel, panel — the place of initiation
+    const wall = wallOf(r, "e");
+    const off = (d: number) => wall.fixed + wall.inDir * d;
+    const inward = new V(wall.inDir, 0, 0);
+    const P = (z: number, y: number, d: number) => new V(off(d), y, z);
+    for (const zj of [41.95, 43.27])
+      trim.quad(P(zj, 0, 0.1), P(zj + 0.18, 0, 0.1), P(zj + 0.18, 2.4, 0.1), P(zj, 2.4, 0.1), inward);
+    trim.quad(P(41.95, 2.4, 0.14), P(43.45, 2.4, 0.14), P(43.45, 2.7, 0.14), P(41.95, 2.7, 0.14), inward);
+    trim.quad(P(42.13, 0, 0.06), P(43.27, 0, 0.06), P(43.27, 2.4, 0.06), P(42.13, 2.4, 0.06), inward);
+    // blind panels on the west wall, dressed but unopened
+    const west = wallOf(r, "w");
+    const Pin = (z: number, y: number, d: number) => new V(west.fixed + west.inDir * d, y, z);
+    const win = new V(west.inDir, 0, 0);
+    for (const z0 of [41.0, 43.0])
+      trim.quad(Pin(z0, 0.9, 0.05), Pin(z0 + 1.4, 0.9, 0.05), Pin(z0 + 1.4, 2.7, 0.05), Pin(z0, 2.7, 0.05), win);
+  }
+}
+
+/** The braziers: where they stand (pyramid-local; `light` their point light's strength, 0
+    for flame only), the gallery's standing on its benches. */
+export function brazierSpots(): { x: number; y: number; z: number; light: number }[] {
+  const gal = ROOMS.find((r) => r.name === "gallery");
+  const benchY = (x: number) => (gal ? floorOf(gal, x) + 0.55 : 0);
+  return [
+    { x: -1.02, y: 0, z: 4.6, light: 4.5 }, // the entry, flanking the mouth
+    { x: 1.02, y: 0, z: 4.6, light: 4.5 },
+    { x: 0, y: 0, z: 24.5, light: 3.5 }, // the junction where the ways part
+    { x: -25.9, y: -9, z: 5.0, light: 7 }, // the resonating chamber
+    { x: -30.1, y: -9, z: 10.4, light: 7 },
+    { x: -2.35, y: 0, z: 41.0, light: 4.5 }, // the Queen's, flanking the seat
+    { x: 2.35, y: 0, z: 41.0, light: 4.5 },
+    { x: 10, y: benchY(10), z: 14.15, light: 0 }, // on the gallery's benches, flame only
+    { x: 24, y: benchY(24), z: 17.25, light: 0 },
+  ];
+}
+
+/** The shafts of light falling from above (pyramid-local): a tapered prism from its top
+    rectangle to its floor rectangle, `a` its brightness. */
+export const SHAFTS: { room: string; top: [number, number, number]; bot: [number, number, number]; tw: number; td: number; bw: number; bd: number; a: number }[] = [
+  { room: "entry", top: [0, 3.6, 6.5], bot: [0, 0, 7.7], tw: 1.1, td: 1.9, bw: 1.5, bd: 2.3, a: 0.1 },
+  { room: "queen", top: [0, 5.5, 42.7], bot: [0, 0, 42.7], tw: 0.45, td: 0.45, bw: 0.85, bd: 0.85, a: 0.085 },
+];
+
+/** Several small geometries as one (the braziers' bronze in two draws, not twenty). */
+function mergedGeoms(gs: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const pos: number[] = [], nor: number[] = [];
+  for (const g0 of gs) {
+    const g = g0.index ? g0.toNonIndexed() : g0;
+    const p = g.getAttribute("position").array as ArrayLike<number>;
+    const n = g.getAttribute("normal").array as ArrayLike<number>;
+    for (let i = 0; i < p.length; i++) pos.push(p[i]);
+    for (let i = 0; i < n.length; i++) nor.push(n[i]);
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  return out;
+}
+
+/** A brazier's flame: the apex flame's teardrop, small, each bowl keeping its own time —
+    the phase is read from where it stands, so one material serves them all. */
+function brazierFlame(uT: N): THREE.SpriteNodeMaterial {
+  const m = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, fog: false });
+  const p = uv().sub(vec2(0.5, 0.0)).mul(vec2(2, 1));
+  const pw = T.positionWorld;
+  const ph = pw.x.mul(7.31).add(pw.z.mul(3.17));
+  const flick = sin(uT.mul(6.3).add(ph)).mul(0.06).add(sin(uT.mul(13.1).add(ph.mul(1.7))).mul(0.04));
+  const width = T.max(float(0.03), float(1).sub(p.y).mul(p.y.mul(3.4).min(1)).mul(0.5));
+  const k = smoothstep(width, width.mul(0.15), abs(p.x.add(flick.mul(p.y)))).mul(smoothstep(0, 0.08, p.y)).mul(smoothstep(1, 0.55, p.y));
+  const core = smoothstep(width.mul(0.5), 0, abs(p.x)).mul(smoothstep(0.5, 0.05, p.y));
+  m.colorNode = vec4(vec3(1.0, 0.62, 0.28).mul(k.mul(0.55)).add(vec3(1.0, 0.9, 0.72).mul(core.mul(0.6))), 1);
+  return m;
+}
+
+/** A brazier's coals: the bed of the bowl breathing its own slow pulse. */
+function brazierCoals(uT: N): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, fog: false });
+  const p = uv().sub(0.5).mul(2);
+  const r = T.length(p);
+  const pw = T.positionWorld;
+  const breath = sin(uT.mul(2.1).add(pw.x.mul(7.31).add(pw.z.mul(3.17)))).mul(0.5).add(0.5);
+  m.colorNode = vec4(vec3(1.0, 0.5, 0.2).mul(smoothstep(1, 0.2, r).mul(0.45).add(smoothstep(1, 0.1, r).mul(breath.mul(0.3)))), 1);
+  return m;
+}
+
+/** A shaft of light: brightness falls with its depth, its edges soften away, its whole
+    breathes. Additive, so it lies over the stone like light and not like glass. */
+function beamMat(uT: N, a: number): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, side: THREE.DoubleSide, fog: false });
+  const p = uv();
+  const edge = smoothstep(0.5, 0.06, abs(p.x.sub(0.5)).mul(2));
+  const fall = T.mix(float(0.3), float(1), p.y);
+  const breath = sin(uT.mul(0.4)).mul(0.5).add(0.5).mul(0.16).add(0.84);
+  m.colorNode = vec4(vec3(1.0, 0.88, 0.66).mul(edge.mul(fall).mul(breath).mul(a)), 1);
+  return m;
+}
+
+function lightShaft(uT: N, s: (typeof SHAFTS)[number]): THREE.Mesh {
+  const [tx, ty, tz] = s.top, [bx, by, bz] = s.bot;
+  const pos: number[] = [], uvs: number[] = [];
+  const quad = (t0: number[], t1: number[], b1: number[], b0: number[]) => {
+    pos.push(...t0, ...t1, ...b1, ...t0, ...b1, ...b0);
+    uvs.push(0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0);
+  };
+  const hw0 = s.tw / 2, hd0 = s.td / 2, hw1 = s.bw / 2, hd1 = s.bd / 2;
+  quad([tx - hw0, ty, tz - hd0], [tx + hw0, ty, tz - hd0], [bx + hw1, by, bz - hd1], [bx - hw1, by, bz - hd1]);
+  quad([tx + hw0, ty, tz + hd0], [tx - hw0, ty, tz + hd0], [bx - hw1, by, bz + hd1], [bx + hw1, by, bz + hd1]);
+  quad([tx - hw0, ty, tz + hd0], [tx - hw0, ty, tz - hd0], [bx - hw1, by, bz - hd1], [bx - hw1, by, bz + hd1]);
+  quad([tx + hw0, ty, tz - hd0], [tx + hw0, ty, tz + hd0], [bx + hw1, by, bz + hd1], [bx + hw1, by, bz - hd1]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  return new THREE.Mesh(g, beamMat(uT, s.a));
+}
+
 /* ---------------------------------------------------------------- the pyramid */
 export type Chamber = "none" | "entry" | "pit" | "queen" | "gallery" | "king";
 
@@ -380,6 +677,8 @@ export class Pyramid {
   private uPit = uniform(0);
   private uCrystal = uniform(0);
   private local = new THREE.Vector3();
+  /** The braziers' lights, each with its own phase and strength, flickered in update. */
+  private braziers: { l: THREE.PointLight; ph: number; k: number }[] = [];
   /** The seven colours of the King's Chamber, lit one by one on the wanderer (main.ts). */
   seven: THREE.Sprite[] = [];
   uDoor = T.uniform(0);
@@ -579,18 +878,25 @@ export class Pyramid {
 
   private buildInside(): void {
     this.inside.position.copy(PYR_ORIGIN);
-    const lime = new Shell(), gran = new Shell();
-    for (const r of ROOMS) buildRoom(r, r.granite ? gran : lime);
-    const limeM = limestone(this.uT, [1.25, 1.2, 1.1], 1.4);
+    const lime = new Shell(), gran = new Shell(), limeT = new Shell(), granT = new Shell();
+    for (const r of ROOMS) {
+      buildRoom(r, r.granite ? gran : lime);
+      dressRoom(r, r.granite ? granT : limeT);
+    }
+    const limeM = lining(this.uT, [1.25, 1.2, 1.1], 1.4);
     limeM.side = THREE.FrontSide;
+    // the King's Chamber glows when its rite wakes, its light reaching down the gallery
+    const awake = vec3(1.0, 0.58, 0.3).mul(T.smoothstep(16, 5, T.distance(T.positionWorld, vec3(50039.6, 27, 15.7))).mul(this.uCrystal.mul(0.5).add(0.06)));
     this.roomsGroup = new THREE.Group();
     this.roomsGroup.add(
       new THREE.Mesh(lime.geometry(), limeM),
-      new THREE.Mesh(gran.geometry(), granite(this.uT))
+      new THREE.Mesh(gran.geometry(), lining(this.uT, [0.66, 0.42, 0.4], 0.45, { fleck: true, awake })),
+      new THREE.Mesh(limeT.geometry(), lining(this.uT, [1.08, 1.02, 0.9], 1.1)),
+      new THREE.Mesh(granT.geometry(), lining(this.uT, [0.5, 0.32, 0.3], 0.4, { fleck: true }))
     );
     this.inside.add(this.roomsGroup);
-    // the coffer: a lidless box of granite
-    const gm = granite(this.uT);
+    // the coffer: a lidless box of rose granite, cut in the same dressed courses as its walls
+    const gm = lining(this.uT, [0.66, 0.42, 0.4], 0.45, { fleck: true });
     const box = (w: number, h: number, d: number, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), gm);
       m.position.set(x, y, z);
@@ -600,8 +906,8 @@ export class Pyramid {
     box(2.3, 0.15, 1.0, C.x, C.y + 0.075, C.z);
     for (const s of [-1, 1]) box(2.3, 1.05, 0.15, C.x, C.y + 0.52, C.z + s * 0.43);
     for (const s of [-1, 1]) box(0.15, 1.05, 0.72, C.x + s * 1.075, C.y + 0.52, C.z);
-    // the crystal over the place of healing
-    const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), crystalGlow(this.uT));
+    // the crystal over the place of healing, brighter as its rite wakes
+    const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), crystalGlow(this.uT, this.uCrystal));
     cr.scale.set(1, 2, 1);
     cr.position.set(C.x, C.y + 3.4, C.z);
     this.inside.add(cr);
@@ -619,10 +925,53 @@ export class Pyramid {
     rim.rotation.x = -Math.PI / 2;
     rim.position.set(PIT.x, PIT.y + 0.05, PIT.z);
     this.inside.add(pit, rim);
-    // light inside: dim, warm, a little
+    // braziers: bronze bowls of living fire, each flame keeping its own time, phased by where
+    // it stands; the deep rooms' pair carry the light, the gallery's are flame alone
+    const flameM = brazierFlame(this.uT);
+    const coalM = brazierCoals(this.uT);
+    const bronzeM = new THREE.MeshStandardNodeMaterial({ color: 0x241b14, roughness: 0.55, metalness: 0.5 });
+    const stems: THREE.BufferGeometry[] = [], bowls: THREE.BufferGeometry[] = [], beds: THREE.BufferGeometry[] = [];
+    for (const s of brazierSpots()) {
+      const stem = new THREE.CylinderGeometry(0.05, 0.08, 0.82, 10);
+      stem.translate(s.x, s.y + 0.41, s.z);
+      const bowl = new THREE.CylinderGeometry(0.3, 0.15, 0.26, 12);
+      bowl.translate(s.x, s.y + 0.95, s.z);
+      const bed = new THREE.CircleGeometry(0.17, 12);
+      bed.rotateX(-Math.PI / 2);
+      bed.translate(s.x, s.y + 1.05, s.z);
+      stems.push(stem);
+      bowls.push(bowl);
+      beds.push(bed);
+      const fl = new THREE.Sprite(flameM);
+      fl.center.set(0.5, 0);
+      fl.scale.set(0.55, 0.95, 1);
+      fl.position.set(s.x, s.y + 1.1, s.z);
+      this.inside.add(fl);
+      if (s.light > 0) {
+        const l = new THREE.PointLight(0xffb870, s.light, 22, 1.6);
+        l.position.set(s.x, s.y + 1.7, s.z);
+        this.inside.add(l);
+        this.braziers.push({ l, ph: (s.x * 7.31 + s.z * 3.17) % 6.283, k: s.light });
+      }
+    }
+    this.inside.add(new THREE.Mesh(mergedGeoms([...stems, ...bowls]), bronzeM), new THREE.Mesh(mergedGeoms(beds), coalM));
+    // shafts of light falling from above, and the King's light spilling at the gallery's head
+    for (const s of SHAFTS) this.inside.add(lightShaft(this.uT, s));
+    const gm2 = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, side: THREE.DoubleSide, fog: false });
+    {
+      const p = uv();
+      const edge = smoothstep(0.5, 0.1, abs(p.x.sub(0.5)).mul(2));
+      const breath = sin(this.uT.mul(0.7)).mul(0.5).add(0.5).mul(0.2).add(0.8);
+      gm2.colorNode = vec4(vec3(1.0, 0.72, 0.42).mul(edge.mul(breath).mul(this.uCrystal.mul(0.2).add(0.05))), 1);
+    }
+    const gq = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.9), gm2);
+    gq.rotation.y = -Math.PI / 2;
+    gq.position.set(33.92, 13 + 1.45, 15.7);
+    this.inside.add(gq);
+    // light inside: dim, warm, a little — the braziers carry the rooms, the King's keeps its own
     const hemi = new THREE.HemisphereLight(0xffe2c0, 0x201810, 0.35);
     this.inside.add(hemi);
-    for (const [x, y, z, k] of [[0, 2.8, 4, 10], [-28, -6, 8, 14], [0, 3.6, 42.7, 10], [18, 11, 15.7, 16], [42, 17.4, 15.7, 14]] as const) {
+    for (const [x, y, z, k] of [[18, 11, 15.7, 12], [42, 17.4, 15.7, 13]] as const) {
       const l = new THREE.PointLight(0xffc88a, k, 22, 1.6);
       l.position.set(x, y, z);
       this.inside.add(l);
@@ -803,6 +1152,11 @@ export class Pyramid {
       this.motes.pos.needsUpdate = true;
     }
     if (this.isInside) {
+      // the braziers breathe: their light flickers, each its own phase, softer on the weakest
+      for (const b of this.braziers) {
+        const f = 0.78 + 0.13 * Math.sin(t * 6.3 + b.ph) + 0.09 * Math.sin(t * 11.7 + b.ph * 1.71);
+        b.l.intensity = b.k * f * (reduced ? 0.72 : 1);
+      }
       const a = this.gallery.pos.array as Float32Array, s = this.gallery.seed;
       const n = a.length / 3;
       for (let i = 0; i < n; i++) {

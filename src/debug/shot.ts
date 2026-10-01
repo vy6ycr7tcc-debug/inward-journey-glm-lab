@@ -2,7 +2,7 @@
    scene's narrated time to T, renders exactly one deterministic frame, and stops. Inert unless
    the `shot` query param is present — normal play is untouched. */
 import { SITES } from "../scenes/sites";
-import { DUAT_ORIGIN } from "../world/pyramid";
+import { DUAT_ORIGIN, PYR_ORIGIN } from "../world/pyramid";
 import { RUIN_SITES } from "../world/depths";
 import { ADEPT_HALL, DENSITY_HALL, LANDMARK_SITES, PAST_HALL, PEAKS, PYRAMID, SPAWN, heightAt } from "../world/terrain";
 import { JOURNEY_ORIGIN } from "../scenes/journey";
@@ -60,6 +60,17 @@ const VIEWS: Record<string, { eye: XYZ; look: XYZ }> = {
   "pyramid-door": { eye: [4.5, 2.2, -66], look: [0, 2.6, -51] }, // the north face, at the mouth's own height: the cut masonry, the gable, the breathing dark
   duat: { eye: [-6, 3.5, 8], look: [18, 0.5, -14] }, // duat-local: behind/above the entry, down the PATH toward station 1
   genesis: { eye: [0, 5.5, 15], look: [0, 2.2, 0] }, // from the wanderer's feet: behind and above, the heart ahead
+};
+
+/** The pyramid's chambers from within (pyr-*): eye/look in pyramid-local measures, base
+    PYR_ORIGIN. The wanderer is stood at a resting spot of its own (main.ts), never on the
+    coffer nor the Queen's centre, so no rite wakes for the still. */
+const PYR_VIEWS: Record<string, { eye: XYZ; look: XYZ }> = {
+  "pyr-entry": { eye: [0, 2.4, 19.6], look: [0, 1.7, 1] }, // down the entry hall to the mouth: the shaft, the braziers, the proud jambs
+  "pyr-pit": { eye: [-24.2, -5.4, 12.8], look: [-28.5, -8.4, 6] }, // over the descent's lip: the resonating chamber, its braziers, the open floor
+  "pyr-queen": { eye: [0.85, 2.4, 36.0], look: [2.4, 2.0, 43.2] }, // down the narrow passage, oblique to the false door, the beam from the gable falling
+  "pyr-gallery": { eye: [4.2, 3.4, 15.7], look: [28, 10.5, 15.7] }, // up the ramp: the benches, the corbels, the King's glow at its head
+  "pyr-king": { eye: [37.7, 15.2, 13.5], look: [44.8, 15.5, 16.9] }, // across the coffer to the crystal, the dressed rose granite, the seven colours' place
 };
 
 /** The tour's public API, plus just enough of main.ts to boot a single frame. */
@@ -273,6 +284,12 @@ export function runShot(ctx: ShotCtx): void {
     const p = ctx.player.pos, fx = -Math.sin(ctx.player.heading), fz = -Math.cos(ctx.player.heading);
     base = [p.x, p.y, p.z];
     view = { eye: [-fx * 5, 3, -fz * 5], look: [fx * 6, 2.2, fz * 6] };
+  } else if (id.startsWith("pyr-")) {
+    // the pyramid's chambers from within: base is the inside group's origin, views pyramid-local
+    base = [PYR_ORIGIN.x, PYR_ORIGIN.y, PYR_ORIGIN.z];
+    const v = PYR_VIEWS[id];
+    if (!v) return;
+    view = v;
   } else if (id === "pyramid" || id === "pyramid-door" || id === "duat") {
     // camera only: main.ts pre-positions the player before runShot is called
     const o = id === "duat" ? DUAT_ORIGIN : PYRAMID;
