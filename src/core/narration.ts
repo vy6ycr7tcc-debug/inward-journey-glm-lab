@@ -52,6 +52,8 @@ export class Narration {
   onEnd: ((id: string) => void) | null = null;
   private raw = new Map<string, Promise<ArrayBuffer | null>>();
   private decoded = new Map<string, Promise<AudioBuffer | null>>();
+  /** Tracks whose fetch/decode was asked for and has not arrived yet. */
+  private pending = new Set<string>();
   private playing: { id: string; src: AudioBufferSourceNode; gain: GainNode; start: number; scale: number; from: number; end: number } | null = null;
   private cueIndex = -1;
   /** Bumped by every play and stop: a track still loading when another is asked for never starts. */
@@ -83,6 +85,7 @@ export class Narration {
     }
     while (this.decoded.size > 4) this.decoded.delete(this.decoded.keys().next().value!);
     if (!p) {
+      this.pending.add(id);
       this.preload([id]);
       p = this.raw.get(id)!.then(async (data) => {
         if (!data) return null;
@@ -92,9 +95,19 @@ export class Narration {
           return null;
         }
       });
+      p.then(
+        () => this.pending.delete(id),
+        () => this.pending.delete(id),
+      );
       this.decoded.set(id, p);
     }
     return p;
+  }
+
+  /** Whether a play() asked for `id` and its audio is still arriving (fetch or decode).
+      Callers that must not move on before a voice speaks wait on this. */
+  busy(id: string): boolean {
+    return this.pending.has(id);
   }
 
   /** Whether a track has playable audio (female-voice copies may not exist yet). */
