@@ -25,7 +25,7 @@ import { scan, type ScanName } from "./temple";
 import { PYRAMID } from "./terrain";
 import { Duat, DUAT_PATH, duatHeight } from "./duat";
 
-const { abs, cos, float, floor, fract, sin, smoothstep, uniform, uv, vec2, vec3, vec4 } = T;
+const { abs, cos, float, floor, fract, length, mix, sin, smoothstep, uniform, uv, vec2, vec3, vec4 } = T;
 const V = THREE.Vector3;
 
 export const PYR_ORIGIN = new THREE.Vector3(50000, 14, 0); // high enough that its lowest chamber (−9) stays above the water line
@@ -83,6 +83,163 @@ function crystalGlow(uT: N): THREE.MeshBasicNodeMaterial {
   const film = cos(vec3(ndv.mul(1.5).add(uT.mul(0.05))).add(vec3(0, 0.33, 0.67)).mul(6.28)).mul(0.5).add(0.5);
   m.colorNode = vec4(film.mul(T.pow(float(1).sub(ndv), 1.5).mul(0.8).add(0.15)), 1);
   return m;
+}
+
+/* ---------------------------------------------------------------- the entrance (item 6) */
+/* The north-face entrance, cut as masonry rather than set against it: the casing is opened
+   where the mouth is, a granite rim stands proud of the face, the passage recedes into the
+   stone and ends in darkness with the chamber's own light breathing in it, and a limestone
+   gable sheds the sky over the whole. (It was two blocks and a lintel leaning on the face,
+   with the warm glow plane buried inside the solid casing — a doorway you could never see
+   into.) The pieces are built here as pure geometry so the mouth can be tested without
+   booting the pyramid. */
+/** The mouth (pyramid-local): the casing is cut open over this rectangle. The interior entry
+    room opens ±1.2 wide, 3 high; the mouth reads a hand wider and taller so the crossing
+    never clips. */
+export const ENTRANCE_MOUTH = { x0: -1.3, x1: 1.3, y0: 0, y1: 3.4 };
+export const ENTRANCE_PROUD = 0.8; // the rim stands this far off the face
+export const ENTRANCE_DEPTH = 6; // the passage recedes this far into the stone at the floor
+export const GABLE_PROUD = 1.5; // the gable stands prouder still: a pediment over the mouth
+
+/** One quad as two triangles, wound so the side the `want` normal points at is the visible
+    (front) side. Flat normals come from computeVertexNormals (non-indexed). */
+function faceQuad(out: number[], a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, want: THREE.Vector3): void {
+  const n = new V().subVectors(b, a).cross(new V().subVectors(d, a));
+  const [p, q, r, s] = n.dot(want) >= 0 ? [a, b, c, d] : [a, d, c, b];
+  out.push(p.x, p.y, p.z, q.x, q.y, q.z, r.x, r.y, r.z, p.x, p.y, p.z, r.x, r.y, r.z, s.x, s.y, s.z);
+}
+function geometryOf(pos: number[]): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** The casing's north face with the mouth cut out: the face is the plane
+    z = −half + (half/ht)·y for y ∈ [0, yTop]; the mouth rectangle is left open so the
+    entrance's own reveals show through. Three quads: two flanks beside the mouth, one crown
+    above it (the mouth reaches the foot of the face, so nothing sits below). */
+export function northFaceGeometry(half: number, ht: number, yTop: number, mouth = ENTRANCE_MOUTH): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const zf = (y: number) => -half + (half / ht) * y;
+  const r = (y: number) => half * (1 - y / ht);
+  const M = mouth, W = M.x1, TOPY = yTop;
+  // a flank between the mouth's jamb and the face's slanted west/east edge
+  const flank = (side: 1 | -1) => {
+    const foot = side * r(M.y0), footTop = side * r(M.y1);
+    faceQuad(
+      pos,
+      new V(foot, M.y0, zf(M.y0)), new V(side * W, M.y0, zf(M.y0)),
+      new V(side * W, M.y1, zf(M.y1)), new V(footTop, M.y1, zf(M.y1)),
+      new V(0, ht, -half), // outward and up, as the face's own normal runs
+    );
+  };
+  flank(-1);
+  flank(1);
+  // the crown above the mouth, full width
+  faceQuad(
+    pos,
+    new V(-r(M.y1), M.y1, zf(M.y1)), new V(r(M.y1), M.y1, zf(M.y1)),
+    new V(r(TOPY), TOPY, zf(TOPY)), new V(-r(TOPY), TOPY, zf(TOPY)),
+    new V(0, ht, -half),
+  );
+  return geometryOf(pos);
+}
+
+/** The entrance itself, as five geometries by material. `granite`: the proud rim (jambs and
+    lintel band) and the threshold sill underfoot. `limestone`: the reveals receding into the
+    stone. `gable`: the gable over the mouth, its own deeper dressed stone so it reads as a
+    piece set before the face, not as more casing. `glow`: the passage's dark end, the
+    chamber's own light breathing in it. `spill`: the light the open door lays on the sand. */
+export function entranceGeometry(half: number, ht: number): {
+  granite: THREE.BufferGeometry;
+  limestone: THREE.BufferGeometry;
+  gable: THREE.BufferGeometry;
+  glow: THREE.BufferGeometry;
+  spill: THREE.BufferGeometry;
+} {
+  const M = ENTRANCE_MOUTH, P = ENTRANCE_PROUD, D = ENTRANCE_DEPTH, GP = GABLE_PROUD;
+  const W = M.x1, MH = M.y1, LT = MH + P; // the lintel band's top (P thick over the mouth)
+  const GW = W + P; // the rim's outer half-width (as wide as it is proud)
+  const GX = W + 1.3, GA = MH + 3.4; // the gable's feet and apex (it overhangs the rim)
+  const zf = (y: number) => -half + (half / ht) * y;
+  const CAPZ = zf(0) + D; // the passage's dark end: flat, vertical, past the slanted face
+  const OUT = new V(0, ht, -half); // the face's outward normal
+  const granite: number[] = [], limestone: number[] = [], gable: number[] = [], glow: number[] = [], spill: number[] = [];
+  for (const side of [-1, 1] as const) {
+    // the rim's front, standing proud of the face, parallel to it
+    faceQuad(granite,
+      new V(side * W, 0, zf(0) - P), new V(side * GW, 0, zf(0) - P),
+      new V(side * GW, LT, zf(LT) - P), new V(side * W, LT, zf(LT) - P), OUT);
+    // the rim's outer end, down to the face
+    faceQuad(granite,
+      new V(side * GW, 0, zf(0) - P), new V(side * GW, 0, zf(0)),
+      new V(side * GW, LT, zf(LT)), new V(side * GW, LT, zf(LT) - P), new V(side, 0, 0));
+    // the rim's top (under the gable's foot, kept for the silhouette)
+    faceQuad(granite,
+      new V(side * W, LT, zf(LT) - P), new V(side * GW, LT, zf(LT) - P),
+      new V(side * GW, LT, zf(LT)), new V(side * W, LT, zf(LT)), new V(0, 1, 0));
+    // the rim's inner face, through the proud band (the reveal carries on behind it)
+    faceQuad(granite,
+      new V(side * W, 0, zf(0) - P), new V(side * W, 0, zf(0)),
+      new V(side * W, MH, zf(MH)), new V(side * W, MH, zf(MH) - P), new V(-side, 0, 0));
+    // the reveal: from the face plane back to the dark end, deeper at the foot (the face slants away)
+    faceQuad(limestone,
+      new V(side * W, 0, zf(0)), new V(side * W, 0, CAPZ),
+      new V(side * W, MH, CAPZ), new V(side * W, MH, zf(MH)), new V(-side, 0, 0));
+    // the gable: a triangular wall over the mouth, standing prouder than the rim
+    faceQuad(gable,
+      new V(side * GX, LT, zf(LT) - GP), new V(0, GA, zf(GA) - GP),
+      new V(0, GA, zf(GA) - 0.02), new V(side * GX, LT, zf(LT) - 0.02),
+      new V(side, 1, 0)); // its sloping edge, shedding the sky sideways off the mouth
+  }
+  // the gable's two faces (front prouder still, back kissing the casing)
+  faceQuad(gable,
+    new V(-GX, LT, zf(LT) - GP), new V(GX, LT, zf(LT) - GP),
+    new V(0, GA, zf(GA) - GP), new V(0, GA, zf(GA) - GP), OUT);
+  {
+    // a triangle pushed through faceQuad: pass the apex twice so the second half is degenerate
+    faceQuad(gable,
+      new V(-GX, LT, zf(LT) - 0.02), new V(GX, LT, zf(LT) - 0.02),
+      new V(0, GA, zf(GA) - 0.02), new V(0, GA, zf(GA) - 0.02), OUT);
+  }
+  // the gable's underside, over the rim and the casing's shoulder (seen from below, approaching)
+  faceQuad(gable,
+    new V(-GX, LT, zf(LT) - GP), new V(GX, LT, zf(LT) - GP),
+    new V(GX, LT, zf(LT) - 0.02), new V(-GX, LT, zf(LT) - 0.02), new V(0, -1, 0));
+  // the lintel band between mouth and gable
+  faceQuad(granite,
+    new V(-GW, MH, zf(MH) - P), new V(GW, MH, zf(MH) - P),
+    new V(GW, LT, zf(LT) - P), new V(-GW, LT, zf(LT) - P), OUT);
+  faceQuad(granite, // its underside: the passage ceiling through the proud band
+    new V(-W, MH, zf(MH) - P), new V(W, MH, zf(MH) - P),
+    new V(W, MH, zf(MH)), new V(-W, MH, zf(MH)), new V(0, -1, 0));
+  faceQuad(granite, // its top, under the gable
+    new V(-GW, LT, zf(LT) - P), new V(GW, LT, zf(LT) - P),
+    new V(GW, LT, zf(LT)), new V(-GW, LT, zf(LT)), new V(0, 1, 0));
+  // the reveal's ceiling, from the face plane back to the dark end
+  faceQuad(limestone,
+    new V(-W, MH, zf(MH)), new V(W, MH, zf(MH)),
+    new V(W, MH, CAPZ), new V(-W, MH, CAPZ), new V(0, -1, 0));
+  // the threshold: the whole walkable depth of the passage, rim to dark end
+  faceQuad(granite,
+    new V(-W, 0, zf(0) - P), new V(W, 0, zf(0) - P),
+    new V(W, 0, CAPZ), new V(-W, 0, CAPZ), new V(0, 1, 0));
+  // the dark end of the passage (the chamber's own light breathes in it — see buildOutside)
+  faceQuad(glow,
+    new V(-W, 0, CAPZ), new V(W, 0, CAPZ),
+    new V(W, MH, CAPZ), new V(-W, MH, CAPZ), new V(0, 0, -1));
+  // the light the open door lays on the sand before it
+  faceQuad(spill,
+    new V(-4.2, 0.07, zf(0) - P - 6.6), new V(4.2, 0.07, zf(0) - P - 6.6),
+    new V(4.2, 0.07, zf(0) - P + 0.4), new V(-4.2, 0.07, zf(0) - P + 0.4), new V(0, 1, 0));
+  return {
+    granite: geometryOf(granite),
+    limestone: geometryOf(limestone),
+    gable: geometryOf(gable),
+    glow: geometryOf(glow),
+    spill: geometryOf(spill),
+  };
 }
 
 /* ---------------------------------------------------------------- rooms, from the inside */
@@ -338,11 +495,12 @@ export class Pyramid {
     this.apex.set(x, y + Ht, z);
     const capK = 0.9; // the capstone: the top tenth
     const at = (k: number) => ({ h: Ht * k, r: H * (1 - k) });
-    const faces = (k0: number, k1: number) => {
+    const faces = (k0: number, k1: number, skipNorth = false) => {
       const a = at(k0), b = at(k1);
       const pos: number[] = [];
       const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
       for (let i = 0; i < 4; i++) {
+        if (skipNorth && i === 0) continue; // the north face carries the entrance mouth (below)
         const [ax, az] = corners[i], [bx, bz] = corners[(i + 1) % 4];
         const p0 = [ax * a.r, a.h, az * a.r], p1 = [bx * a.r, a.h, bz * a.r], p2 = [bx * b.r, b.h, bz * b.r], p3 = [ax * b.r, b.h, az * b.r];
         // outward winding: corners run clockwise seen from above (−z to +x), so this faces out
@@ -353,29 +511,46 @@ export class Pyramid {
       g.computeVertexNormals();
       return g;
     };
-    const casing = new THREE.Mesh(faces(0, capK), limestone(this.uT, [1.45, 1.4, 1.3], 1, 3.2));
+    const limeM = limestone(this.uT, [1.45, 1.4, 1.3], 1, 3.2);
+    const casing = new THREE.Mesh(faces(0, capK, true), limeM);
     casing.receiveShadow = casing.castShadow = true;
+    // the north face, its mouth cut open — the entrance's own geometry fills the cut
+    const north = new THREE.Mesh(northFaceGeometry(H, Ht, Ht * capK), limeM);
+    north.receiveShadow = north.castShadow = true;
     const cap = new THREE.Mesh(faces(capK, 0.9999), granite(this.uT));
     cap.castShadow = true;
-    this.world.add(casing, cap);
-    // the entrance, on the north face: a doorway of granite blocks standing out from the casing
-    const gm = granite(this.uT);
-    const dz = -H - 1.0;
-    for (const sx of [-1.6, 1.6]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(1.1, 4.2, 2.2), gm);
-      post.position.set(sx, 2.1, dz + 0.6);
-      this.world.add(post);
-    }
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.1, 2.4), gm);
-    lintel.position.set(0, 4.7, dz + 0.6);
-    this.world.add(lintel);
-    const glowM = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, side: THREE.DoubleSide, fog: false });
-    const d = uv().sub(vec2(0.5, 0)).mul(vec2(2, 1));
-    glowM.colorNode = vec4(vec3(1.0, 0.82, 0.55).mul(smoothstep(1.1, 0.2, T.length(d)).mul(0.35)), 1);
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 4.1), glowM);
-    glow.position.set(0, 2.05, dz + 1.3);
-    this.world.add(glow);
-    this.door.set(x, y, z + dz - 0.4);
+    this.world.add(casing, north, cap);
+    // the entrance (item 6): a proud granite rim round a mouth cut into the masonry, the
+    // passage receding to a dark end where the chamber's own light breathes, a limestone
+    // gable shedding the sky over it, and the open door's light lying on the sand
+    const eg = entranceGeometry(H, Ht);
+    const rim = new THREE.Mesh(eg.granite, granite(this.uT));
+    rim.castShadow = rim.receiveShadow = true;
+    const reveals = new THREE.Mesh(eg.limestone, limeM); // the same dressed stone as the casing
+    reveals.castShadow = reveals.receiveShadow = true;
+    // the gable, its own deeper dressed stone at its own block scale (the casing's triplanar
+    // is world-space: at the same tile the gable would clone the wall behind it and vanish —
+    // a pediment must read as a piece set before the face, shading the mouth)
+    const gable = new THREE.Mesh(eg.gable, limestone(this.uT, [1.02, 0.96, 0.85], 0.5, 3.9));
+    gable.castShadow = gable.receiveShadow = true;
+    const dark = new THREE.Mesh(eg.glow, (() => {
+      const m = new THREE.MeshBasicNodeMaterial({ fog: true });
+      const pc = T.positionGeometry;
+      const breath = sin(this.uT.mul(0.5)).mul(0.12).add(0.88); // the chamber's slow breath
+      const ember = smoothstep(1.15, 0.05, length(vec2(pc.x, pc.y.sub(0.9).mul(0.72))));
+      m.colorNode = vec4(mix(vec3(0.014, 0.01, 0.008), vec3(1.0, 0.6, 0.28), ember.mul(breath).mul(0.5)), 1);
+      return m;
+    })());
+    const spill = new THREE.Mesh(eg.spill, (() => {
+      const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, side: THREE.DoubleSide, fog: false });
+      const ps = T.positionGeometry;
+      const breath = sin(this.uT.mul(0.5)).mul(0.12).add(0.88);
+      const pool = smoothstep(1.0, 0.1, length(vec2(ps.x.mul(0.16), ps.z.add(H + ENTRANCE_PROUD + 3.1).mul(0.21))));
+      m.colorNode = vec4(vec3(1.0, 0.7, 0.36).mul(pool.mul(breath).mul(0.34)), 1);
+      return m;
+    })());
+    this.world.add(rim, reveals, gable, dark, spill);
+    this.door.set(x, y, z - H + 0.4); // the mouth's threshold: the rim front stands just north of it
     // the third spiral: from the apex, like a candle flame (58.24); soft and contained
     const fm = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, fog: false });
     {
@@ -566,9 +741,9 @@ export class Pyramid {
   outside(): { x: number; z: number; heading: number } {
     return { x: this.door.x, z: this.door.z - 4, heading: 0 };
   }
-  /** At the entrance, outside. */
+  /** At the entrance, outside: within the mouth's own width, at its threshold. */
   atDoor(p: THREE.Vector3): boolean {
-    return Math.abs(p.x - this.door.x) < 1.5 && p.z > this.door.z - 1.2 && p.z < this.door.z + 2.2 && p.y < PYRAMID.y + 4;
+    return Math.abs(p.x - this.door.x) < 1.25 && p.z > this.door.z - 1.2 && p.z < this.door.z + 2.2 && p.y < PYRAMID.y + 4;
   }
   /** Near the apex, outside. */
   atApex(p: THREE.Vector3): boolean {
