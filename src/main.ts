@@ -34,6 +34,7 @@ import { T, fogUniforms, gpuUniforms, gradeUniforms, ijFogNode } from "./gpu/tsl
 import { newerBuild, reloadTo } from "./core/fresh";
 import { Presences } from "./world/presences";
 import { Guide, type Destination } from "./world/guide";
+import { WalkMeThere } from "./player/handfree";
 import { ARCHIVE, GROVE_SITES, ORB_SITES } from "./world/sites";
 import { Communion } from "./world/communion";
 import { Creatures } from "./world/creatures";
@@ -1133,6 +1134,7 @@ function places(): Place[] {
 
 /** Wake at the chosen place. */
 function arrive(c: Choice, first: boolean): void {
+  takeOver(); // a landing supersedes a hands-free walk (item 16)
   // the land to build is heavy work that holds the page still: first a soft dark with the
   // loading mark, painted, then the work, then the dark lifts
   busy(1.5);
@@ -2465,6 +2467,29 @@ $("#howto-close").addEventListener("click", () => ($("#howto").hidden = true));
 /* ---- The guide: tell it where you'd like to go, and it leads the way ---- */
 const guide = new Guide();
 scene.add(guide.group);
+/** "Walk me there" (item 16): one click and the wanderer goes — the visitor watches, listens,
+    and contemplates; the stick or a key takes over as today. */
+const handfree = new WalkMeThere();
+const handfreePanel = Object.assign(document.createElement("div"), { id: "handfree-panel", hidden: true });
+{
+  const mid = Object.assign(document.createElement("div"), { className: "mid" });
+  mid.append(Object.assign(document.createElement("p"), { className: "title" }), Object.assign(document.createElement("p"), { className: "hint" }));
+  const end = Object.assign(document.createElement("button"), { type: "button", textContent: "✕", className: "end" });
+  end.setAttribute("aria-label", "Take over the walk");
+  end.addEventListener("pointerdown", (e) => (e.stopPropagation(), takeOver()));
+  handfreePanel.append(mid, end);
+  document.body.append(handfreePanel);
+}
+const handfreeTitle = (t: string, hint: string) => {
+  (handfreePanel.querySelector(".title") as HTMLElement).textContent = t;
+  (handfreePanel.querySelector(".hint") as HTMLElement).textContent = hint;
+};
+function takeOver(): void {
+  if (!handfree.active) return;
+  handfree.takeOver();
+  player.target = null;
+  handfreePanel.hidden = true;
+}
 const guidePanel = $("#guide"), guideList = $("#guide-list"), guidePick = $("#guide-pick");
 let guideChoice: Destination | null = null;
 guide.onArrive = (d) => {
@@ -2551,6 +2576,9 @@ $("#guide-close").addEventListener("click", closeGuide);
 $("#guide-walk").addEventListener("click", () => {
   if (!guideChoice) return;
   guide.lead(guideChoice, player.pos);
+  handfree.start(guideChoice.x, guideChoice.z); // item 16: one click, and the wanderer goes
+  handfreeTitle(`Walking with the light · ${guideChoice.label}`, "Tap the stick or a key to take over");
+  handfreePanel.hidden = false;
   whisper(`Follow the light · ${guideChoice.label}`, 5000);
   closeGuide();
 });
@@ -2878,6 +2906,17 @@ function update(dt: number): void {
   if (S.mode === "play") {
     if (wanderer.gesture !== "none" && Math.hypot(input.move.x, input.move.y) > 0.2 && wanderer.gesture === "sit") wanderer.setGesture("none");
     if (autofly.active && !isTv && (Math.hypot(input.move.x, input.move.y) > 0.25 || input.hold)) setAutofly(false); // the thumb takes over
+    // "walk me there" (item 16): the stick or a key takes over as today; otherwise the
+    // journey completes itself, the guide orb leading ahead
+    if (handfree.active && (Math.hypot(input.move.x, input.move.y) > 0.2 || input.hold)) takeOver();
+    if (handfree.active) {
+      if (apart()) takeOver(); // the open-world walk ends where the open world does
+      else {
+        const t = handfree.update(player.pos);
+        player.target = t ? t : null;
+        if (!t) handfreePanel.hidden = true; // arrived
+      }
+    }
     if (genesis.active || temple.cardsOpen || tourScenes.tour.active) player.update(dt, { x: 0, y: 0, glide: false, run: 0, hold: false, down: false, pitch: follow.pitch }, follow.yaw);
     else if (autofly.active) {
       const r = autofly.update(dt, player.pos);

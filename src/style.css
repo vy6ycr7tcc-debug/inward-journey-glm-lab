@@ -674,7 +674,7 @@ body.tv-mode #problem {
 
 /* calm: nothing touched for a while, or autofly: the controls and the half-moon fade away (an
    animation, not a transition: the stick sets its own inline transition while it moves) */
-body.calm #joy, body.calm #act, body.calm #ctx, body.calm #menu-btn, body.calm #tp-mini, body.calm #hear-again {
+body.calm #joy, body.calm #act, body.calm #ctx, body.calm #menu-btn, body.calm #tp-mini, body.calm #hear-again, body.calm #handfree-panel {
   animation: calm-out 1.4s ease forwards;
 }
 @keyframes calm-out { to { opacity: 0; } }
