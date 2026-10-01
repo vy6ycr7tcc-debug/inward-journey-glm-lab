@@ -90,31 +90,47 @@ export class Creatures {
 
   private async load(): Promise<void> {
     const pale = new THREE.Color(1.05, 1.15, 1.35), gold = new THREE.Color(1.35, 1.1, 0.8), rose = new THREE.Color(1.35, 0.95, 1.1);
-    const horses = await herdOf("models/animals/horse.glb", this.horseCount, 2.1, [pale, pale, gold], 1);
-    this.horses = horses.map((a) => ({ ...a, p: new THREE.Vector3(), heading: Math.random() * 6.28, home: new THREE.Vector3(), goal: new THREE.Vector3(), speed: 0, nextGoal: 0, breathe: Math.random() * 6 }));
+    // Each herd stands on its own: one slow or broken fetch must not leave the whole world
+    // empty of animals (the owner played a game with none — a hung flock used to hold the
+    // horses hostage too, since nothing attached until every model had landed).
+    const attach = (animals: Animal[]) =>
+      animals.forEach((a) => {
+        this.group.add(a.obj);
+        a.obj.traverse((o) => (o as THREE.Mesh).isMesh && this.mats.add((o as THREE.Mesh).material as THREE.Material));
+        a.obj.visible = false;
+      });
+    void herdOf("models/animals/horse.glb", this.horseCount, 2.1, [pale, pale, gold], 1)
+      .then((horses) => {
+        this.horses = horses.map((a) => ({ ...a, p: new THREE.Vector3(), heading: Math.random() * 6.28, home: new THREE.Vector3(), goal: new THREE.Vector3(), speed: 0, nextGoal: 0, breathe: Math.random() * 6 }));
+        attach(this.horses);
+      })
+      .catch((e) => console.warn(`[creatures] the horses did not come: ${String(e)}`));
     const per = Math.ceil(this.birdCount / 3);
-    const flocks = await Promise.all([
-      herdOf("models/animals/stork.glb", per, 0.35, [new THREE.Color(1.0, 0.97, 0.92)], 1),
-      herdOf("models/animals/flamingo.glb", per, 0.45, [rose], 1),
-      herdOf("models/animals/parrot.glb", per, 0.3, [new THREE.Color(0.7, 1.0, 0.92), gold], 1),
-    ]);
-    flocks.forEach((f, flock) =>
-      f.forEach((a) => {
-        a.action.timeScale = 0.55 + Math.random() * 0.2;
-        this.birds.push({ ...a, p: new THREE.Vector3(), v: new THREE.Vector3(), flock, phase: Math.random() * 6 });
-      }),
+    const tints: [string, THREE.Color[]][] = [
+      ["stork", [new THREE.Color(1.0, 0.97, 0.92)]],
+      ["flamingo", [rose]],
+      ["parrot", [new THREE.Color(0.7, 1.0, 0.92), gold]],
+    ];
+    tints.forEach(([name, ts], flock) =>
+      void herdOf(`models/animals/${name}.glb`, per, 0.35, ts, 1)
+        .then((birds) =>
+          birds.forEach((a) => {
+            a.action.timeScale = 0.55 + Math.random() * 0.2;
+            const b: Bird = { ...a, p: new THREE.Vector3(), v: new THREE.Vector3(), flock, phase: Math.random() * 6 };
+            this.birds.push(b);
+            attach([b]);
+          }),
+        )
+        .catch((e) => console.warn(`[creatures] the ${name}s did not come: ${String(e)}`)),
     );
-    for (const a of [...this.horses, ...this.birds]) {
-      this.group.add(a.obj);
-      a.obj.traverse((o) => (o as THREE.Mesh).isMesh && this.mats.add((o as THREE.Mesh).material as THREE.Material));
-      a.obj.visible = false;
-    }
   }
 
-  /** Find open meadow near a point, for a herd to roam. */
+  /** Find open meadow near a point, for a herd to roam. Close enough to be seen through the
+      night fog (the owner: the world feels emptier without them), far enough to be company,
+      not furniture. */
   private meadowNear(x: number, z: number, seed: number): THREE.Vector3 | null {
     for (let k = 0; k < 30; k++) {
-      const a = hash(seed, k, 1) * 6.28, r = 30 + hash(seed, k, 2) * 70;
+      const a = hash(seed, k, 1) * 6.28, r = 22 + hash(seed, k, 2) * 48;
       const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
       const h = heightAt(px, pz);
       if (h > WATER_Y + 0.6 && h < 30 && groundKind(px, pz, h).stone < 0.3) return new THREE.Vector3(px, h, pz);
