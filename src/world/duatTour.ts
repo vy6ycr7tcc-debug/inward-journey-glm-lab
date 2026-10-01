@@ -11,14 +11,8 @@ import * as THREE from "three/webgpu";
 import { duatHeight, duatTourStops, DUAT_PATH, type TourStop } from "./duat";
 import { DUAT_ORIGIN } from "./pyramid";
 
-const smooth = (x: number) => {
-  const t = Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
-  return t * t * (3 - 2 * t);
-};
-
 type Phase = "leading" | "telling" | "done" | "offered";
 const DWELL = 2.6; // a breath between a stop's telling and the light gliding on
-const LIGHT_SPEED = 3.2;
 const ARRIVE_R = 2.2;
 
 export interface DuatTourPlayer {
@@ -34,6 +28,13 @@ export interface DuatTourFollow {
 }
 export interface DuatTourHooks {
   whisper: (text: string, ms?: number) => void;
+}
+
+/** The one companion (item 15): the guide orb itself, leading the night's tour along the
+    wanderer's own route. */
+export interface TourGuide {
+  lead(d: { label: string; x: number; y: number; z: number }, from: THREE.Vector3, opts?: { via?: THREE.Vector3[]; linger?: boolean }): void;
+  stop(): void;
 }
 
 /** The light's way from a to b (Duat-local x, z): along the path's own polyline, never over
@@ -61,19 +62,15 @@ export class DuatTour {
   /** The session is paused (item 13's controller rides this tour too): the light, the walk
       and the telling's hold all wait. Driven from the narration engine's flag (main.ts). */
   paused = false;
+  /** The companion (item 15): set by main; when absent the tour still walks itself. */
+  guide: TourGuide | null = null;
   private stops: TourStop[] = [];
   private index = 0;
   private phase: Phase = "leading";
   private hold = 0;
   private dwell = 0;
   private lifeT = 0;
-  private light: THREE.Sprite;
-  private halo: THREE.Sprite;
-  private lightMat: THREE.SpriteMaterial;
-  private haloMat: THREE.SpriteMaterial;
   /** The light's place, Duat-local x, z. */
-  private lightAt = new THREE.Vector2();
-  private path: THREE.Vector2[] = [];
   private walk: THREE.Vector2[] = [];
   private goal = new THREE.Vector2();
   private panel: HTMLDivElement;
@@ -84,31 +81,10 @@ export class DuatTour {
   private endBox: HTMLDivElement;
   private stayBtn: HTMLButtonElement;
   private climbBtn: HTMLButtonElement;
-  private readonly dir = new THREE.Vector2();
 
-  constructor(scene: THREE.Scene, private player: DuatTourPlayer, private follow: DuatTourFollow, private hooks: DuatTourHooks) {
-    // the guiding light: a small bright core in a soft glow, as the temple tour's is
-    const c = document.createElement("canvas");
-    c.width = c.height = 64;
-    const g = c.getContext("2d")!;
-    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0, "rgba(255,240,214,1)");
-    grd.addColorStop(0.2, "rgba(255,208,140,0.55)");
-    grd.addColorStop(1, "rgba(255,184,110,0)");
-    g.fillStyle = grd;
-    g.fillRect(0, 0, 64, 64);
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = () => new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0 });
-    this.lightMat = mat();
-    this.haloMat = mat();
-    this.light = new THREE.Sprite(this.lightMat);
-    this.light.scale.setScalar(0.55);
-    this.halo = new THREE.Sprite(this.haloMat);
-    this.halo.scale.setScalar(2.2);
-    this.light.visible = this.halo.visible = false;
-    scene.add(this.light, this.halo);
-    // the guide's panel: back, where you are, next; and ✕ to end the tour
+  constructor(_scene: THREE.Scene, private player: DuatTourPlayer, private follow: DuatTourFollow, private hooks: DuatTourHooks) {
+    // the guiding presence is the guide itself (item 15): main hands it over as `guide`
+  // the guide's panel: back, where you are, next; and ✕ to end the tour
     const btn = (text: string, cls: string, label: string) => Object.assign(document.createElement("button"), { type: "button", textContent: text, className: cls, ariaLabel: label });
     this.panel = Object.assign(document.createElement("div"), { id: "duat-tour-panel", hidden: true });
     this.prevBtn = btn("‹", "step", "Back");
@@ -159,9 +135,7 @@ export class DuatTour {
     this.lifeT = 0;
     this.endBox.hidden = true;
     this.panel.hidden = false;
-    this.light.visible = this.halo.visible = true;
     const s = this.stops[Math.max(0, Math.min(k, this.stops.length - 1))];
-    this.lightAt.set(this.player.pos.x - DUAT_ORIGIN.x, this.player.pos.z - DUAT_ORIGIN.z);
     if (there) {
       this.placeAt(this.stops.indexOf(s));
       this.go(this.stops.indexOf(s), true);
@@ -179,7 +153,7 @@ export class DuatTour {
     if (this.follow.dist !== undefined) this.follow.dist = 7;
     this.panel.hidden = true;
     this.endBox.hidden = true;
-    this.light.visible = this.halo.visible = false;
+    this.guide?.stop(); // the companion is dismissed with the tour
   }
 
   private placeAt(k: number): void {
@@ -197,12 +171,20 @@ export class DuatTour {
     this.phase = "leading";
     const s = this.stops[k];
     this.goal.set(s.x, s.z);
-    this.path = route(this.lightAt, this.goal);
     const from = new THREE.Vector2(this.player.pos.x - DUAT_ORIGIN.x, this.player.pos.z - DUAT_ORIGIN.z);
     this.walk = there
       ? []
       : route(from, this.goal).map((p) => new THREE.Vector2(DUAT_ORIGIN.x + p.x, DUAT_ORIGIN.z + p.y));
     this.player.target = null;
+    // the companion flies the wanderer's own route ahead of them, and marks the stop (item 15)
+    if (this.guide) {
+      const via = this.walk.slice(0, -1).map((p) => new THREE.Vector3(p.x, DUAT_ORIGIN.y + duatHeight(p.x - DUAT_ORIGIN.x, p.y - DUAT_ORIGIN.z) + 1.9, p.y));
+      this.guide.lead(
+        { label: s.title, x: DUAT_ORIGIN.x + s.x, y: DUAT_ORIGIN.y + s.y + 1.6, z: DUAT_ORIGIN.z + s.z },
+        this.player.pos,
+        { via, linger: true },
+      );
+    }
     if (there || k === 0) this.arrive();
     this.refresh();
   }
@@ -265,27 +247,7 @@ export class DuatTour {
     if (!this.active || this.paused || this.phase === "offered") return;
     const step = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.05) : 0;
     this.lifeT += step;
-    // the light travels its way, slowing into the last metres, then waits, turning slowly
-    let moving = false;
-    if (this.path.length) {
-      const target = this.path[0], d = this.lightAt.distanceTo(target);
-      const v = LIGHT_SPEED * (this.path.length === 1 ? Math.min(1, 0.3 + d / 2.5) : 1) * step;
-      if (d <= v || d < 1e-3) {
-        this.lightAt.copy(target);
-        this.path.shift();
-      } else this.lightAt.addScaledVector(this.dir.subVectors(target, this.lightAt).normalize(), v);
-      moving = true;
-    }
-    const lx = DUAT_ORIGIN.x + this.lightAt.x + (moving ? 0 : Math.cos(this.lifeT * 0.7) * 0.35);
-    const lz = DUAT_ORIGIN.z + this.lightAt.y + (moving ? 0 : Math.sin(this.lifeT * 0.7) * 0.35);
-    const ly = DUAT_ORIGIN.y + duatHeight(lx - DUAT_ORIGIN.x, lz - DUAT_ORIGIN.z) + 2.2 + Math.sin(this.lifeT * 1.3) * 0.1;
-    this.light.position.set(lx, ly, lz);
-    this.halo.position.copy(this.light.position);
-    const fade = smooth(this.lifeT / 1.5);
-    const breathe = 0.8 + 0.2 * Math.sin(this.lifeT * 1.1);
-    const lead = this.phase === "leading" ? 1 : this.phase === "done" ? 0.8 : 0.45;
-    this.lightMat.opacity = fade * breathe * (0.55 + 0.45 * lead);
-    this.haloMat.opacity = fade * breathe * 0.18 * lead;
+    // the companion flies itself (the guide's own update); the tour only commands it
 
     // the wanderer walks its way, point after point, and arrives at the standing place
     if (this.phase === "leading") {
@@ -333,11 +295,6 @@ export class DuatTour {
 
   dispose(): void {
     this.exit();
-    this.light.removeFromParent();
-    this.halo.removeFromParent();
-    this.lightMat.map?.dispose();
-    this.lightMat.dispose();
-    this.haloMat.dispose();
     this.panel.remove();
     this.endBox.remove();
   }
