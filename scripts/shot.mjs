@@ -22,13 +22,14 @@ page.on("console", (m) => {
 page.on("pageerror", (e) => errors.push(`[pageerror] ${String(e).slice(0, 240)}`));
 
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+// Wall-clock polling (not rAF): the boot can stall the main thread in long GPU tasks, which
+// starves rAF-based polling and made e.g. ?shot=pyramid report a false timeout.
 let ready = false;
-try {
-  await page.waitForFunction("window.__shotReady === true", { timeout: 120000 });
-  ready = true;
-} catch {
-  errors.push("[fatal] __shotReady never set (timeout)");
+for (let i = 0; i < 120 && !ready; i++) {
+  await page.waitForTimeout(1000);
+  ready = await page.evaluate(() => window.__shotReady === true).catch(() => false);
 }
+if (!ready) errors.push("[fatal] __shotReady never set (timeout)");
 await page.waitForTimeout(700);
 if (ready) await page.screenshot({ path: out });
 const backend = await page.evaluate(() => {

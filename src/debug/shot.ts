@@ -34,6 +34,7 @@ const DEFAULT_T: Record<string, number> = {
   tree: 30,
   "tree-station": 8, // TEMP-VERIFY
   pyramid: 30,
+  "pyramid-door": 30,
   duat: 30,
   genesis: 9,
 };
@@ -56,6 +57,7 @@ const VIEWS: Record<string, { eye: XYZ; look: XYZ }> = {
   tree: { eye: [16, 4, 16], look: [0, 0, 0] }, // the crest
   "tree-station": { eye: [0, 1.7, 0], look: [2.5, 9.0, 8] }, // seated view, tilted up: the tree stands ~5m above the seat on the slope
   pyramid: { eye: [0, 58, 210], look: [0, 32, 0] }, // offsets from PYRAMID (terrain)
+  "pyramid-door": { eye: [4.5, 2.2, -66], look: [0, 2.6, -51] }, // the north face, at the mouth's own height: the cut masonry, the gable, the breathing dark
   duat: { eye: [-6, 3.5, 8], look: [18, 0.5, -14] }, // duat-local: behind/above the entry, down the PATH toward station 1
   genesis: { eye: [0, 5.5, 15], look: [0, 2.2, 0] }, // from the wanderer's feet: behind and above, the heart ahead
 };
@@ -271,9 +273,9 @@ export function runShot(ctx: ShotCtx): void {
     const p = ctx.player.pos, fx = -Math.sin(ctx.player.heading), fz = -Math.cos(ctx.player.heading);
     base = [p.x, p.y, p.z];
     view = { eye: [-fx * 5, 3, -fz * 5], look: [fx * 6, 2.2, fz * 6] };
-  } else if (id === "pyramid" || id === "duat") {
+  } else if (id === "pyramid" || id === "pyramid-door" || id === "duat") {
     // camera only: main.ts pre-positions the player before runShot is called
-    const o = id === "pyramid" ? PYRAMID : DUAT_ORIGIN;
+    const o = id === "duat" ? DUAT_ORIGIN : PYRAMID;
     base = [o.x, o.y, o.z];
     const v = VIEWS[id];
     if (!v) return;
