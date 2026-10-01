@@ -2893,6 +2893,8 @@ const tourScenes: TourScenes = initTourScenes({
 tourScenes.tour.guide = guide;
 /** The Duat's tour (item 8): the temple tour's automatic pattern, carried into the night. */
 const duatTour = new DuatTour(scene, player, follow, { whisper });
+// item 15: the same companion leads the night's tour
+duatTour.guide = guide;
 // Lesson scenes are created above, AFTER the startup additiveKeepsAlpha pass (line ~263),
 // so their additive materials were never converted. Re-run to cover them: without this,
 // additive glow punches dark squares into the lakes' reflection texture.
