@@ -10,13 +10,21 @@
    Hall of the Two Truths; the Field of Reeds, and Khepri rolling the sun up into the dawn. A stair
    of stone climbs from the last gate to the dawn, and out onto the apex (main.ts).
    Coordinates are Duat-local (floor y = 0); `heightAt` answers the ground (dunes away from the
-   way, the stair). Only the names of places are spoken: no invented narration. */
+   way, the stair). Only the names of places are spoken: no invented narration — and none exists
+   as recordings yet (docs/duat-audio-inventory.md); the tellings hold in silence until some can
+   be laid under them.
+   Item 8: the key moments are animated, beat-timed and multi-phase — the solar boat's journey
+   rides the river the whole way (it lingers at each gate, its sun brightening, and rises into
+   the dawn); Apophis coils about the sun, rears, and is cut, on the hour's own clock; the heart
+   is weighed against the feather of Ma'at, the beam tipping, settling, and the gold rising. All
+   of them are pure functions of their clock, so stills and replays are exact. */
 import * as THREE from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { MOBILE } from "../core/quality";
 import { ribbonGeometry, ribbonMaterial } from "../gpu/ribbons";
-import { T } from "../gpu/tsl";
-import { GOLD, PALE, PEARL, ROSE, EMBER, VisionStage, type Key, type Maker } from "../scenes/visionStage";
-import { combine, cord, FORM_H, rock, shift, sphere, sun, turnY, type Rand } from "./forms";
+import { gpuUniforms, softPoints, spriteCloud, T, viewDepth, type SpriteCloud } from "../gpu/tsl";
+import { GOLD, PALE, PEARL, EMBER, VisionStage, type Key, type Maker } from "../scenes/visionStage";
+import { combine, cord, FORM_H, rng, rock, shift, sphere, sun, turnY, type Rand } from "./forms";
 import { landStone } from "./stoneworks";
 import { surface } from "./textures";
 
@@ -38,7 +46,7 @@ const RIM = 50; // the gorge's walls stand beyond this
 
 /* ---------------------------------------------------------------- the ground */
 /** Distance (x, z) from the way, and the way's height there. */
-function nearWay(x: number, z: number): { d: number; y: number } {
+export function nearWay(x: number, z: number): { d: number; y: number } {
   let best = Infinity, y = 0;
   for (let i = 0; i < DUAT_PATH.length - 1; i++) {
     const a = DUAT_PATH[i], b = DUAT_PATH[i + 1];
@@ -102,43 +110,6 @@ function barque(n: number, R: Rand, y = 1.2): Float32Array {
     [(m) => shift(sphere(m, R, 0.45, 0, 0.9), 0, y + 0.8, 0), 0.3],
   ]);
 }
-/** A balance: post, beam and two pans. `tilt` −1..1. */
-function scales(n: number, R: Rand, tilt = 0): Float32Array {
-  const beamY = 3.1, a = tilt * 0.25;
-  const L = new V(-1.3 * Math.cos(a), beamY - 1.3 * Math.sin(a), 0), Rt = new V(1.3 * Math.cos(a), beamY + 1.3 * Math.sin(a), 0);
-  const pan = (c: THREE.Vector3) => (m: number) => {
-    const out = new Float32Array(m * 3);
-    for (let i = 0; i < m; i++) {
-      const k = R();
-      if (k < 0.45) {
-        const t = R();
-        const s = R() < 0.5 ? -1 : 1;
-        out.set([c.x + s * 0.3 * t, c.y - t * 1.1, 0], i * 3);
-      } else {
-        const ang = R() * Math.PI * 2, r = 0.45 * Math.sqrt(R());
-        out.set([c.x + Math.cos(ang) * r, c.y - 1.1 - (1 - (r / 0.45) ** 2) * 0.15, Math.sin(ang) * r], i * 3);
-      }
-    }
-    return out;
-  };
-  return combine(n, [
-    [(m) => cord([new V(0, 0, 0), new V(0, beamY + 0.2, 0)], m, R, 0.06), 0.25],
-    [(m) => cord([L, new V(0, beamY, 0), Rt], m, R, 0.05), 0.25],
-    [pan(L), 0.25],
-    [pan(Rt), 0.25],
-  ]);
-}
-/** The feather of Ma'at: a tall curved quill and its vanes. */
-function feather(n: number, R: Rand, h = 3.2, x = 0, y = 0.4): Float32Array {
-  const out = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const t = R(), bend = Math.sin(t * Math.PI * 0.8) * 0.35;
-    const w = Math.sin(Math.min(1, t * 1.15) * Math.PI) * 0.42 * (t > 0.08 ? 1 : 0);
-    const side = R() < 0.5 ? -1 : 1, across = R() < 0.25 ? 0 : side * R() * w;
-    out.set([x + bend + across * 0.2, y + t * h, across], i * 3);
-  }
-  return out;
-}
 /** The scarab: an oval body, its head, six legs, holding up a sun. */
 function scarab(n: number, R: Rand, lift = 0): Float32Array {
   const body = (m: number) => {
@@ -197,14 +168,20 @@ function mound(n: number, R: Rand): Float32Array {
   return out;
 }
 
-/** The six hours: where on the way, the place's name, and its story as forms and keys (one cycle,
-    repeated while you are near). */
+/** The six hours: where on the way, the place's name, and its story — either as forms and keys
+    (one cycle, repeated while you are near) or, for the moments the owner named, as an animated
+    telling: a pure function of the telling's own clock, beat-timed, multi-phase. */
+export const APOPHIS_PERIOD = 27;
+export const WEIGHING_PERIOD = 36;
 interface Hour {
   at: number;
   name: string;
   emblem: "water" | "serpent" | "ankh" | "coils" | "feather" | "scarab";
-  forms: Record<string, Maker>;
-  cycle: Omit<Key, "t">[];
+  forms?: Record<string, Maker>;
+  cycle?: Omit<Key, "t">[];
+  /** The animated telling (item 8) and its period in seconds. */
+  moment?: (t: number, n: number, P: Float32Array, C: Float32Array) => void;
+  period?: number;
 }
 const HOURS: Hour[] = [
   {
@@ -264,41 +241,15 @@ const HOURS: Hour[] = [
     at: 4,
     name: "Apophis",
     emblem: "coils",
-    forms: {
-      coil: (n, R) => serpent(n, R, 7, 0, 1.2),
-      rears: (n, R) => combine(n, [[(m) => serpent(m, R, 7, 1, 1.2), 0.75], [(m) => sun(m, R, 3.4), 0.25]]),
-      cut: (n, R) => combine(n, [
-        [(m) => shift(serpent(m, R, 3, 0), -2.2, 0, 0.8), 0.3],
-        [(m) => shift(serpent(m, R, 3, 0), 2.0, 0, -0.6), 0.3],
-        [(m) => sun(m, R, 3.2), 0.4],
-      ]),
-    },
-    cycle: [
-      { form: "coil", tint: ROSE },
-      { form: "rears", tint: EMBER },
-      { form: "cut", tint: GOLD },
-    ],
+    moment: apophisInto,
+    period: APOPHIS_PERIOD,
   },
   {
     at: 5,
     name: "The Hall of the Two Truths",
     emblem: "feather",
-    forms: {
-      scales: (n, R) => scales(n, R, 0.6),
-      weighed: (n, R) => combine(n, [
-        [(m) => scales(m, R, 0), 0.7],
-        [(m) => shift(sphere(m, R, 0.28, 0, 0.9), -1.3, 2.3, 0), 0.12],
-        [(m) => feather(m, R, 1.2, 1.3, 2.05), 0.18],
-      ]),
-      feather: (n, R) => feather(n, R),
-      heart: (n, R) => combine(n, [[(m) => shift(sphere(m, R, 0.6, 0, 0.8), 0, 2.2, 0), 1]]),
-    },
-    cycle: [
-      { form: "scales", tint: PEARL },
-      { form: "weighed", tint: GOLD },
-      { form: "feather", tint: PALE },
-      { form: "heart", tint: ROSE },
-    ],
+    moment: weighingInto,
+    period: WEIGHING_PERIOD,
   },
   {
     at: 6,
@@ -320,10 +271,221 @@ const HOURS: Hour[] = [
 ];
 const HOLD = 9; // seconds each moment of an hour holds
 
+/* ------------------------------------------------- the animated moments (item 8) */
+/** Deterministic per-point randomness (no state, so a still can recompute it exactly) and the
+    ease every phase shares. */
+const pj = (i: number, k = 0): number => {
+  const s = Math.sin(i * 127.1 + k * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+};
+const ease = (x: number): number => {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * (3 - 2 * t);
+};
+
+/** Apophis coiled about the sun, beat-timed: 0–9 the coils tighten about it; 9–18 it rears,
+    the sun straining; 18–27 the cut — the two halves drift apart and the sun flares free.
+    The coil is a true helix about the sun, its body a tube of light. */
+export function apophisInto(t: number, n: number, P: Float32Array, C: Float32Array): void {
+  const nS = Math.floor(n * 0.72);
+  const tight = ease(t / 9);
+  const rear = ease((t - 9) / 9);
+  const cut = ease((t - 18) / 5);
+  const sunK = 0.3 + 0.7 * ease((t - 17) / 4);
+  for (let i = 0; i < n; i++) {
+    const j = i * 3;
+    if (i < nS) {
+      const u = i / nS;
+      const side = u < 0.43 ? -1 : 1;
+      if (u < 0.86) {
+        // the body: a helix of light wound about the sun, tightening as the hour turns
+        const v = u / 0.86;
+        const a = v * Math.PI * 2 * 3.2 + Math.sin(t * 0.4 + v * 5) * 0.1;
+        const r = 1.75 * (1.4 - 0.4 * tight) * (1 - 0.08 * Math.sin(v * Math.PI * 2));
+        const ta = pj(i, 30) * Math.PI * 2, tr = 0.2 * Math.sqrt(pj(i, 31));
+        const lift = rear * (v > 0.7 ? Math.pow((v - 0.7) / 0.3, 2) * 6.5 : 0);
+        P[j] = Math.cos(a) * r + Math.cos(ta) * tr + side * 3.0 * cut + Math.sin(t * 1.3 + v * 9) * 0.12;
+        P[j + 1] = 0.45 + v * 2.5 + Math.sin(ta) * tr + lift + cut * (v - 0.5) * 0.8;
+        P[j + 2] = Math.sin(a) * r + Math.sin(ta) * tr;
+        const head = v > 0.8 ? 1.3 : 1;
+        C[j] = 0.8 * head;
+        C[j + 1] = 0.52 * head;
+        C[j + 2] = 0.6 * head;
+      } else {
+        // the head: a knot of light at the coil's crown, swaying
+        const v = (u - 0.86) / 0.14;
+        const a = v * Math.PI * 2, rr = 0.3 * Math.sqrt(pj(i, 32));
+        P[j] = 0.35 + Math.cos(a) * rr + side * 3.0 * cut;
+        P[j + 1] = 2.95 + rear * 6.5 + Math.sin(a) * rr * 0.8 + Math.sin(t * 1.9) * 0.1;
+        P[j + 2] = Math.sin(a) * rr;
+        C[j] = 1.25;
+        C[j + 1] = 0.85;
+        C[j + 2] = 1.0;
+      }
+    } else {
+      const k = pj(i, 3), a = k * Math.PI * 2 + t * 0.35, rr = 1.05 * Math.sqrt(pj(i, 4));
+      const flare = 1 + 0.15 * Math.sin(t * 1.7) + 0.5 * (sunK - 0.3);
+      P[j] = Math.cos(a) * rr * flare;
+      P[j + 1] = 1.7 + (pj(i, 5) - 0.5) * rr * flare;
+      P[j + 2] = Math.sin(a) * rr * flare;
+      C[j] = 1.15;
+      C[j + 1] = 0.62 + 0.2 * sunK;
+      C[j + 2] = 0.38 + 0.15 * sunK;
+    }
+  }
+}
+
+/** The heart weighed against the feather of Ma'at, beat-timed: 0–7 the heart descends onto
+    the west pan; 7–16 the beam tips under it; 16–23 the feather descends onto the east; 23–30
+    the beam settles level and a band of gold rises through the balance; then rest. */
+export function weighingInto(t: number, n: number, P: Float32Array, C: Float32Array): void {
+  const nScale = Math.floor(n * 0.52), nHeart = Math.floor(n * 0.2), nFeather = Math.floor(n * 0.15);
+  const a = t < 7 ? 0 : t < 16 ? 0.22 * ease((t - 7) / 9) : t < 23 ? 0.22 : t < 30 ? 0.22 * (1 - ease((t - 23) / 7)) : 0;
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const heartK = ease(t / 7), featherK = ease((t - 16) / 7);
+  const bandK = t < 23 ? 0 : t < 31 ? ease((t - 23) / 8) : 1 - ease((t - 31) / 5);
+  const panAt = (s: number) => ({ x: s * ca, y: 3.1 + s * sa - 1.1 });
+  const w = panAt(-1.3), e = panAt(1.3);
+  for (let i = 0; i < n; i++) {
+    const j = i * 3;
+    if (i < nScale) {
+      const u = i / nScale;
+      if (u < 0.2) {
+        P[j] = 0;
+        P[j + 1] = (u / 0.2) * 3.3;
+        P[j + 2] = 0;
+      } else if (u < 0.55) {
+        const s = -1.3 + ((u - 0.2) / 0.35) * 2.6;
+        P[j] = s * ca;
+        P[j + 1] = 3.1 + s * sa;
+        P[j + 2] = 0;
+      } else {
+        const west = (u - 0.55) / 0.45 < 0.5, q = pj(i, 6), ang = q * Math.PI * 2, rr = 0.45 * Math.sqrt(pj(i, 7));
+        const c = west ? w : e;
+        if (q < 0.3) {
+          P[j] = c.x;
+          P[j + 1] = c.y + 1.1 - ((q / 0.3) * 1.1);
+          P[j + 2] = 0;
+        } else {
+          P[j] = c.x + Math.cos(ang) * rr;
+          P[j + 1] = c.y - (1 - (rr / 0.45) ** 2) * 0.12;
+          P[j + 2] = Math.sin(ang) * rr;
+        }
+      }
+      C[j] = 1.0;
+      C[j + 1] = 0.94;
+      C[j + 2] = 0.86;
+    } else if (i < nScale + nHeart) {
+      const k = i - nScale, fall = (1 - heartK) * 3.6;
+      const dx = pj(k, 8) - 0.5, dy = pj(k, 9) - 0.5, dz = pj(k, 10) - 0.5;
+      const m = Math.hypot(dx, dy, dz) || 1, r = 0.3 * (0.75 + 0.25 * pj(k, 11));
+      P[j] = w.x + (dx / m) * r;
+      P[j + 1] = w.y + 0.12 + (dy / m) * r + fall;
+      P[j + 2] = (dz / m) * r;
+      C[j] = 1.0;
+      C[j + 1] = 0.7;
+      C[j + 2] = 0.8;
+    } else if (i < nScale + nHeart + nFeather) {
+      const k = i - nScale - nHeart, u = pj(k, 12);
+      const bend = Math.sin(u * Math.PI * 0.8) * 0.3;
+      const wd = Math.sin(Math.min(1, u * 1.15) * Math.PI) * 0.36;
+      const side = pj(k, 13) < 0.5 ? -1 : 1, across = pj(k, 14) < 0.25 ? 0 : side * pj(k, 15) * wd;
+      const fall = (1 - featherK) * 3.6;
+      P[j] = e.x + bend + across * 0.2;
+      P[j + 1] = e.y + 0.15 + u * 1.2 + fall;
+      P[j + 2] = across;
+      C[j] = 0.72;
+      C[j + 1] = 0.82;
+      C[j + 2] = 1.0;
+    } else {
+      // the band of gold that rises through the balance when it settles
+      const k = i - nScale - nHeart - nFeather, ang = pj(k, 16) * Math.PI * 2, rr = 0.5 + pj(k, 17) * 1.0;
+      P[j] = Math.cos(ang) * rr;
+      P[j + 1] = 0.15 + bandK * (3.2 + pj(k, 18) * 1.4);
+      P[j + 2] = Math.sin(ang) * rr;
+      const g = bandK * (0.55 + 0.45 * pj(k, 19));
+      C[j] = 1.0 * g;
+      C[j + 1] = 0.78 * g;
+      C[j + 2] = 0.48 * g;
+    }
+  }
+}
+
+/** An animated telling: one body of points whose places are a pure function of the telling's
+    own clock (so stills and replays are exact), phased by beats. Unattended, it rests as a
+    small glow low on the ground, as a stage does. */
+class Moment {
+  group = new THREE.Group();
+  private n = MOBILE ? 7000 : 10000;
+  private cloud: SpriteCloud;
+  private P: Float32Array;
+  private C: Float32Array;
+  private idle: Float32Array;
+  private life = 0;
+  private uT = T.uniform(0);
+  private uGlow = T.uniform(1);
+
+  constructor(at: THREE.Vector3, face: number, private into: Hour["moment"], private period: number, seedNum: number) {
+    this.group.position.copy(at);
+    this.group.rotation.y = face;
+    const R = rng(seedNum);
+    const mat = softPoints();
+    this.cloud = spriteCloud(this.n, { position: 3, aCol: 3, aSeed: 1 }, mat);
+    this.P = this.cloud.attrs.position.array as Float32Array;
+    this.C = this.cloud.attrs.aCol.array as Float32Array;
+    this.idle = new Float32Array(this.n * 3);
+    for (let i = 0; i < this.n; i++) {
+      const r = 1.3 * Math.sqrt(R()), a2 = R() * Math.PI * 2;
+      this.idle.set([Math.cos(a2) * r, 0.15 + R() * 0.25, Math.sin(a2) * r], i * 3);
+      this.C.set([0.95, 0.82, 0.62], i * 3);
+    }
+    this.P.set(this.idle);
+    const seeds = this.cloud.attrs.aSeed.array as Float32Array;
+    for (let i = 0; i < this.n; i++) seeds[i] = R();
+    const { clamp, float, length, max, pointUV, sin, smoothstep } = T;
+    const { position, aCol, aSeed } = this.cloud.nodes;
+    const worldPos = T.modelWorldMatrix.mul(vec4(position, 1)).xyz;
+    const depth = viewDepth(worldPos);
+    mat.sizeNode = clamp(gpuUniforms.px.mul(0.042).mul(aSeed.mul(0.8).add(0.6)).div(max(depth, 1.2)), float(1).div(gpuUniforms.dpr), 5);
+    const flick = sin(this.uT.mul(aSeed.mul(9).add(12)).add(aSeed.mul(97))).mul(0.12).add(0.88);
+    const soft = smoothstep(0.5, 0.05, length(pointUV.sub(0.5)));
+    const nearK = smoothstep(1.2, 3.5, depth);
+    mat.colorNode = vec4(aCol.mul(soft).mul(flick).mul(this.uGlow).mul(nearK).mul(0.75), 1);
+    this.cloud.sprite.frustumCulled = false;
+    this.group.add(this.cloud.sprite);
+  }
+
+  update(dt: number, clock: number, telling: boolean, near: boolean, _reduced: boolean): void {
+    this.group.visible = near;
+    if (!near) return;
+    this.life += dt;
+    this.uT.value = this.life;
+    const P = this.P, C = this.C;
+    if (!telling || !this.into) {
+      const k = Math.min(1, dt * 0.5);
+      for (let j = 0; j < this.n * 3; j++) {
+        P[j] += (this.idle[j] - P[j]) * k;
+        C[j] += (0.95 - C[j]) * k;
+      }
+      this.uGlow.value = 0.7 + 0.2 * Math.sin(this.life * 0.7);
+    } else {
+      this.uGlow.value = 1;
+      this.into(((clock % this.period) + this.period) % this.period, this.n, P, C);
+    }
+    this.cloud.attrs.position.needsUpdate = this.cloud.attrs.aCol.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.cloud.sprite.removeFromParent();
+    (this.cloud.sprite.material as THREE.Material).dispose();
+    this.cloud.sprite.geometry.dispose();
+  }
+}
+
 /** Keys for many turns of an hour's cycle (its clock runs only while you are near). */
-function keysFor(h: Hour): Key[] {
+function keysFor(cycle: Omit<Key, "t">[]): Key[] {
   const keys: Key[] = [];
-  for (let k = 0; k < 40; k++) h.cycle.forEach((c, i) => keys.push({ ...c, t: 0.5 + (k * h.cycle.length + i) * HOLD, dur: 4.5 }));
+  for (let k = 0; k < 40; k++) cycle.forEach((c, i) => keys.push({ ...c, t: 0.5 + (k * cycle.length + i) * HOLD, dur: 4.5 }));
   return keys;
 }
 
@@ -369,22 +531,103 @@ function emblemSegments(kind: Hour["emblem"] | "wingedSun", s: number): number[]
   return seg;
 }
 
+/** The solar boat's shape, boat-local: a crescent hull, its cabin, and the sun it carries —
+    dimmer in the hull as the dawn takes the sun up out of it. Pure and deterministic. */
+export function boatShape(t: number, n: number, P: Float32Array, C: Float32Array, dawnK = 0): void {
+  const nH = Math.floor(n * 0.68), nC = Math.floor(n * 0.14);
+  const pulse = 1 + 0.12 * Math.sin(t * 1.4);
+  for (let i = 0; i < n; i++) {
+    const j = i * 3;
+    if (i < nH) {
+      const u = i / nH, x = -2.4 + u * 4.8;
+      const y = Math.pow(Math.abs(x) / 2.4, 3) * 1.1 + (pj(i, 22) - 0.5) * 0.1;
+      P[j] = x;
+      P[j + 1] = y + 0.35;
+      P[j + 2] = (pj(i, 23) - 0.5) * 0.5;
+      const fade = 1 - dawnK * 0.75;
+      C[j] = 1.0 * fade;
+      C[j + 1] = 0.72 * fade;
+      C[j + 2] = 0.38 * fade;
+    } else if (i < nH + nC) {
+      const k = pj(i, 24), a = k * Math.PI * 2, rr = 0.4 * Math.sqrt(pj(i, 25));
+      P[j] = Math.cos(a) * rr;
+      P[j + 1] = 1.15 + (pj(i, 26) - 0.5) * rr;
+      P[j + 2] = Math.sin(a) * rr;
+      const fade = 1 - dawnK * 0.6;
+      C[j] = 0.9 * fade;
+      C[j + 1] = 0.8 * fade;
+      C[j + 2] = 0.62 * fade;
+    } else {
+      // the sun aboard, rising as the dawn comes
+      const k = pj(i, 27), a = k * Math.PI * 2 + t * 0.3, rr = 0.5 * Math.sqrt(pj(i, 28)) * pulse;
+      P[j] = Math.cos(a) * rr;
+      P[j + 1] = 1.55 + dawnK * 3.2 + (pj(i, 29) - 0.5) * rr;
+      P[j + 2] = Math.sin(a) * rr;
+      C[j] = 1.0;
+      C[j + 1] = 0.78 + 0.1 * dawnK;
+      C[j + 2] = 0.48 + 0.14 * dawnK;
+    }
+  }
+}
+
+export interface BoatClock {
+  gates: number[];
+  period: number;
+  marks: number[];
+  dwell: number;
+  sail: number;
+}
+/** The journey's beat plan: sail S between consecutive waypoints, dwell D at each gate. Pure,
+    so the tests can hold it; `marks` are the clock times each waypoint's dwell begins. */
+export function boatSchedule(gates: number[]): BoatClock {
+  const sail = 16, dwell = 5;
+  const marks: number[] = [];
+  let t = 0;
+  for (let k = 0; k < gates.length + 1; k++) {
+    t += sail;
+    if (k < gates.length) {
+      t += dwell;
+      marks.push(t);
+    }
+  }
+  return { gates, period: t, marks, dwell, sail };
+}
+/** Where the boat is on the river (0–1) at journey time t — flat at a gate's dwell, sailing
+    between, eased in and out of each leg. */
+export function boatUAt(t: number, bc: BoatClock): number {
+  const legs = [0, ...bc.gates, 1];
+  let k = 0;
+  while (k < bc.marks.length && t >= bc.marks[k]) k++;
+  // inside leg k: it began after the previous mark (or 0) and ends at marks[k]
+  const segStart = k === 0 ? 0 : bc.marks[k - 1];
+  const segEnd = k < bc.marks.length ? bc.marks[k] - bc.dwell : segStart + bc.sail;
+  const f = bc.sail > 0 ? Math.min(1, Math.max(0, (t - segStart) / Math.max(0.01, segEnd - segStart))) : 1;
+  const e2 = f * f * (3 - 2 * f);
+  return legs[k] + (legs[k + 1] - legs[k]) * e2;
+}
+
 /* ---------------------------------------------------------------- the Duat */
 export class Duat {
   /** For still frames (?shot=duat-<k>&t=): every hour's clock reads this. */
   static clockOverride: number | null = null;
   group = new THREE.Group();
-  private stages: { stage: VisionStage; at: THREE.Vector3; clock: number; named: boolean; name: string }[] = [];
+  private stages: { telling: { group: THREE.Group; update(dt: number, clock: number, telling: boolean, near: boolean, reduced: boolean): void }; at: THREE.Vector3; clock: number; named: boolean; name: string }[] = [];
   private flames: { sprite: THREE.Sprite; base: number; phase: number }[] = [];
   private uT = T.uniform(0);
+  private boat: { cloud: SpriteCloud; n: number; curve: THREE.CatmullRomCurve3 } | null = null;
+  private boatGroup: THREE.Group | null = null;
+  private boatClock: BoatClock | null = null;
+  private boatP = new V();
+  private boatT = new V();
 
   constructor(private say: (text: string, ms: number) => void) {
     this.buildSky();
     this.buildGround();
     this.buildGorge();
-    this.buildRiver();
+    const river = this.buildRiver();
     this.buildStair();
     this.buildLamps();
+    this.buildBoat(river);
     this.buildHours();
     // the light of the night: faint and blue from above, warm from the lamps; a dawn in the east
     this.group.add(new THREE.HemisphereLight(0x5a6aa8, 0x2a1c10, 0.7));
@@ -448,13 +691,16 @@ export class Duat {
     this.group.add(cliff);
   }
 
-  /** A dark river beside the way (on its inner side), slow gold moving on it. */
-  private buildRiver(): void {
+  /** A dark river beside the way (on its inner side), slow gold moving on it. Returns the
+    curve and its length, for the solar boat's journey. */
+  private buildRiver(): { curve: THREE.CatmullRomCurve3; len: number } {
     const c = new V();
     for (const q of DUAT_PATH.slice(0, 7)) c.add(q);
     c.multiplyScalar(1 / 7);
+    const curve = new THREE.CatmullRomCurve3(DUAT_PATH.slice(0, 7).map((q) => q.clone().lerp(c, 0.28).setY(0)), false, "centripetal");
+    const pts = curve.getSpacedPoints(160);
+    const len = curve.getLength();
     const left: number[] = [], idx: number[] = [], along: number[] = [];
-    const pts = new THREE.CatmullRomCurve3(DUAT_PATH.slice(0, 7).map((q) => q.clone().lerp(c, 0.28).setY(0)), false, "centripetal").getSpacedPoints(160);
     pts.forEach((q, i) => {
       const nxt = pts[Math.min(pts.length - 1, i + 1)], prv = pts[Math.max(0, i - 1)];
       const dir = new V().subVectors(nxt, prv).normalize(), side = new V(-dir.z, 0, dir.x);
@@ -476,6 +722,63 @@ export class Duat {
     const glint = T.pow(flow, 18).mul(0.5);
     m.colorNode = vec4(vec3(0.01, 0.015, 0.035).add(vec3(1.0, 0.75, 0.4).mul(glint.mul(edge))), edge.mul(0.92));
     this.group.add(new THREE.Mesh(g, m));
+    return { curve, len };
+  }
+
+  /** The solar boat's journey (item 8): the barque of golden light rides the dark river the
+      whole way — it lingers at each of the six gates while its sun brightens, sails on between,
+      and at the stair's foot its sun rises into the dawn and the boat begins again. A pure
+      function of the night's own clock, so stills freeze it mid-journey. */
+  private buildBoat(river: { curve: THREE.CatmullRomCurve3; len: number }): void {
+    // where each hour's gate stands along the river (its nearest point, as a fraction)
+    const gates = HOURS.map((h) => {
+      const at = DUAT_PATH[h.at];
+      let best = 0, bd = Infinity;
+      for (let k = 0; k <= 240; k++) {
+        const p = river.curve.getPointAt(k / 240), d = (p.x - at.x) ** 2 + (p.z - at.z) ** 2;
+        if (d < bd) (bd = d), (best = k / 240);
+      }
+      return best;
+    });
+    this.boatClock = boatSchedule(gates);
+    const n = MOBILE ? 1200 : 2000;
+    const mat = softPoints();
+    const cloud = spriteCloud(n, { position: 3, aCol: 3, aSeed: 1 }, mat);
+    this.boat = { cloud, n, curve: river.curve };
+    const P = cloud.attrs.position.array as Float32Array;
+    const C = cloud.attrs.aCol.array as Float32Array;
+    const seeds = cloud.attrs.aSeed.array as Float32Array;
+    const { clamp, float, length, max, pointUV, sin, smoothstep } = T;
+    const { position, aCol, aSeed } = cloud.nodes;
+    const worldPos = T.modelWorldMatrix.mul(vec4(position, 1)).xyz;
+    const depth = viewDepth(worldPos);
+    mat.sizeNode = clamp(gpuUniforms.px.mul(0.04).mul(aSeed.mul(0.8).add(0.6)).div(max(depth, 1.2)), float(1).div(gpuUniforms.dpr), 5);
+    const flick = sin(this.uT.mul(aSeed.mul(9).add(12)).add(aSeed.mul(97))).mul(0.12).add(0.88);
+    const soft = smoothstep(0.5, 0.05, length(pointUV.sub(0.5)));
+    const nearK = smoothstep(1.2, 3.5, depth);
+    mat.colorNode = vec4(aCol.mul(soft).mul(flick).mul(nearK).mul(0.85), 1);
+    for (let i = 0; i < n; i++) seeds[i] = pj(i, 21);
+    boatShape(0, n, P, C);
+    cloud.sprite.frustumCulled = false;
+    this.boatGroup = new THREE.Group();
+    this.boatGroup.add(cloud.sprite);
+    this.group.add(this.boatGroup);
+  }
+
+  private updateBoat(t: number): void {
+    const bc = this.boatClock, boat = this.boat, group = this.boatGroup;
+    if (!bc || !boat || !group) return;
+    const jt = ((t % bc.period) + bc.period) % bc.period;
+    const u = boatUAt(jt, bc);
+    const p = boat.curve.getPointAt(THREE.MathUtils.clamp(u, 0, 1), this.boatP);
+    const tg = boat.curve.getTangentAt(THREE.MathUtils.clamp(u, 0, 1), this.boatT);
+    group.position.set(p.x, duatHeight(p.x, p.z) + 0.22 + Math.sin(t * 0.9) * 0.05, p.z);
+    group.rotation.y = Math.atan2(tg.x, tg.z);
+    const dawnK = THREE.MathUtils.clamp((u - bc.gates[bc.gates.length - 1]) / Math.max(0.01, 1 - bc.gates[bc.gates.length - 1]), 0, 1);
+    const P = boat.cloud.attrs.position.array as Float32Array;
+    const C = boat.cloud.attrs.aCol.array as Float32Array;
+    boatShape(t, boat.n, P, C, dawnK);
+    boat.cloud.attrs.position.needsUpdate = boat.cloud.attrs.aCol.needsUpdate = true;
   }
 
   /** The stair from the last gate up to the dawn: blocks of stone, one course a step. */
@@ -593,12 +896,15 @@ export class Duat {
         }
       }
       this.group.add(gate);
-      // the story, standing on the way beyond the gate, facing whoever comes through
+      // the story, standing on the way beyond the gate, facing whoever comes through —
+      // the hours the owner named as an animated telling, the rest as a stage of forms
       const sp = at.clone();
       sp.y = duatHeight(sp.x, sp.z);
-      const stage = new VisionStage({ at: sp, face: face + Math.PI, forms: h.forms, keys: keysFor(h), seedNum: 700 + h.at * 13 });
-      this.group.add(stage.group);
-      this.stages.push({ stage, at: sp, clock: 0, named: false, name: h.name });
+      const telling: { group: THREE.Group; update(dt: number, clock: number, telling: boolean, near: boolean, reduced: boolean): void } = h.moment
+        ? new Moment(sp, face + Math.PI, h.moment, h.period ?? 30, 900 + h.at * 17)
+        : new VisionStage({ at: sp, face: face + Math.PI, forms: h.forms ?? {}, keys: keysFor(h.cycle ?? []), seedNum: 700 + h.at * 13 });
+      this.group.add(telling.group);
+      this.stages.push({ telling, at: sp, clock: 0, named: false, name: h.name });
       // a warm light on the gate's stone
       const lamp = new THREE.PointLight(0xffb070, 8, 14, 1.8);
       lamp.position.set(gp.x, gate.position.y + 3, gp.z).addScaledVector(dir, -2);
@@ -606,9 +912,11 @@ export class Duat {
     }
   }
 
-  /** Each frame, with the wanderer's position (Duat-local). */
-  update(t: number, dt: number, local: THREE.Vector3, reduced: boolean): void {
+  /** Each frame, with the wanderer's position (Duat-local). `frozen`: the session is paused
+      (item 13) — the tellings' clocks stand still with it; the night itself flows on. */
+  update(t: number, dt: number, local: THREE.Vector3, reduced: boolean, frozen = false): void {
     this.uT.value = reduced ? t * 0.4 : t;
+    this.updateBoat(t);
     for (const f of this.flames) {
       const k = reduced ? 1 : 0.85 + 0.1 * Math.sin(t * 9 + f.phase) + 0.05 * Math.sin(t * 23 + f.phase * 2);
       f.sprite.scale.setScalar(f.base * k);
@@ -617,15 +925,52 @@ export class Duat {
       const d = Math.hypot(local.x - s.at.x, local.z - s.at.z);
       const near = d < 30;
       const telling = d < 16;
-      // its clock runs while you are with it, and rests (from the start again) once you have gone
-      if (telling) s.clock += dt;
+      // its clock runs while you are with it (but stands still while the session is paused),
+      // and rests (from the start again) once you have gone
+      if (telling && !frozen) s.clock += dt;
       else if (d > 30) s.clock = 0;
       if (Duat.clockOverride !== null) s.clock = Duat.clockOverride;
-      s.stage.update(Math.min(0.05, dt), s.clock, telling, near, reduced);
+      s.telling.update(Math.min(0.05, dt), s.clock, telling, near, reduced);
       if (!s.named && d < 12) {
         s.named = true;
         this.say(s.name, 5000);
       }
     }
   }
+}
+
+/* ---------------------------------------------------------------- the tour's stops (item 8) */
+export interface TourStop {
+  /** Duat-local: standing place on the way (y already the ground) and the heading that faces
+      the telling. */
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  /** Only the name of the place: no narration is invented (the header's rule). */
+  title: string;
+  /** How long the telling holds before the tour moves on by itself. */
+  hold: number;
+}
+/** The tour's stops, in walking order: the hidden door, the six hours, the stair of dawn. */
+export function duatTourStops(): TourStop[] {
+  const stops: TourStop[] = [];
+  const h0 = Math.atan2(DUAT_PATH[1].x - DUAT_PATH[0].x, DUAT_PATH[1].z - DUAT_PATH[0].z);
+  stops.push({ x: DUAT_PATH[0].x, y: duatHeight(DUAT_PATH[0].x, DUAT_PATH[0].z), z: DUAT_PATH[0].z, heading: h0, title: "The Duat", hold: 7 });
+  for (const h of HOURS) {
+    const at = DUAT_PATH[h.at], prev = DUAT_PATH[h.at - 1];
+    const dir = new V().subVectors(at, prev).setY(0).normalize();
+    const sp = at.clone().addScaledVector(dir, -4.5);
+    stops.push({
+      x: sp.x,
+      y: duatHeight(sp.x, sp.z),
+      z: sp.z,
+      heading: Math.atan2(dir.x, dir.z),
+      title: h.name,
+      hold: h.moment ? (h.period ?? 30) + 4 : Math.min(h.cycle?.length ?? 3, 3) * HOLD + 6,
+    });
+  }
+  const last = DUAT_PATH[7], pv = DUAT_PATH[6];
+  stops.push({ x: last.x, y: duatHeight(last.x, last.z), z: last.z, heading: Math.atan2(last.x - pv.x, last.z - pv.z), title: "The dawn", hold: 9 });
+  return stops;
 }
