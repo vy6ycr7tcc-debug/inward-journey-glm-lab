@@ -50,6 +50,12 @@ export class Narration {
   subtitlesOn = false;
   current: string | null = null;
   onEnd: ((id: string) => void) | null = null;
+  /** The session is paused (item 13): the voice holds its place, the clock stands still, and
+      everything that reads this clock — a lesson's animation, a tour's advance — freezes with
+      it. True even when no track is speaking (a tour of the silent night may pause). */
+  paused = false;
+  private pauseAt = 0;
+  private pauseEnd: number = Infinity;
   private raw = new Map<string, Promise<ArrayBuffer | null>>();
   private decoded = new Map<string, Promise<AudioBuffer | null>>();
   /** Tracks whose fetch/decode was asked for and has not arrived yet. */
@@ -137,13 +143,55 @@ export class Narration {
   /** Debug still-frame hook (?shot): when set, time() reads this instead of the audio clock. */
   debugTime: number | null = null;
 
-  /** Seconds into the current track, on the audio clock (0 when nothing plays). */
+  /** Seconds into the current track, on the audio clock (0 when nothing plays). While paused
+      it stands exactly where the pause took it, so nothing that reads the clock drifts. */
   time(): number {
+    if (this.paused) return this.pauseAt;
     if (this.debugTime !== null) return this.debugTime;
     const p = this.playing;
     const ctx = this.audio.ctx;
     if (!p || !ctx) return 0;
     return p.from + Math.max(0, (ctx.currentTime - p.start) / p.scale);
+  }
+
+  /** Pause: the voice steps aside quickly, its place and its part are kept, and the clock
+      freezes. Resume replays the same part from the very second it held. */
+  pause(): void {
+    if (this.paused) return;
+    this.pauseAt = this.time(); // the place is taken before the clock stands still
+    this.paused = true;
+    const p = this.playing;
+    if (p) this.pauseEnd = p.end;
+    const ctx = this.audio.ctx;
+    if (p && ctx) {
+      const t = ctx.currentTime;
+      p.gain.gain.cancelScheduledValues(t);
+      p.gain.gain.setValueAtTime(p.gain.gain.value, t);
+      p.gain.gain.linearRampToValueAtTime(0, t + 0.12);
+      p.src.stop(t + 0.17);
+    }
+    this.playing = null;
+    window.clearTimeout(this.fakeTimer);
+  }
+
+  /** Resume: pick up exactly where the pause took the voice. */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    const id = this.current, from = this.pauseAt, end = this.pauseEnd;
+    if (id) void this.play(id, from, end);
+  }
+
+  /** Go back a little and keep playing (or keep holding, if paused) — never before the part
+      the session asked for. */
+  back(seconds: number): void {
+    if (!this.current) return;
+    if (this.paused) {
+      this.pauseAt = Math.max(this.partFrom, this.pauseAt - seconds);
+      return;
+    }
+    const at = Math.max(this.partFrom, this.time() - seconds);
+    void this.play(this.current, at, this.playing?.end ?? Infinity);
   }
 
   private partFrom = 0;
@@ -160,6 +208,7 @@ export class Narration {
   async play(id: string, from = 0, to = Infinity): Promise<void> {
     const track = trackFor(id);
     if (!track) return;
+    this.paused = false; // a fresh play supersedes any pause
     // Debug still-frame hook: no audio at all — the scene still sees the track as current.
     if (this.debugTime !== null) {
       this.current = id;
@@ -175,7 +224,7 @@ export class Narration {
     if (token !== this.token || this.current !== id || !ctx) return;
     if (!buf) {
       // No audio: the words still arrive, as subtitles paced like speech.
-      this.fakePlay(track);
+      this.fakePlay(track, from);
       return;
     }
     const src = ctx.createBufferSource();
@@ -210,6 +259,7 @@ export class Narration {
     const p = this.playing;
     const ctx = this.audio.ctx;
     this.playing = null;
+    this.paused = false;
     this.token++;
     if (p && ctx) {
       const t = ctx.currentTime;
@@ -235,10 +285,12 @@ export class Narration {
   }
 
   private fakeTimer = 0;
-  private fakePlay(track: Track): void {
-    let i = 0;
+  private fakePlay(track: Track, fromT = 0): void {
+    let i = track.cues.findIndex((c) => c.t >= fromT);
+    if (fromT > 0 && i < 0) i = track.cues.length;
+    if (i < 0) i = 0;
     const next = () => {
-      if (this.current !== track.id) return;
+      if (this.current !== track.id || this.paused) return;
       if (i >= track.cues.length) return this.finish(track.id);
       this.showSub(track.cues[i].text);
       const nextT = i + 1 < track.cues.length ? track.cues[i + 1].t : track.duration;
