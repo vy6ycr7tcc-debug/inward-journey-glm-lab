@@ -1104,8 +1104,9 @@ export class Pyramid {
     this.inside.visible = inside;
   }
 
-  /** Each frame. `pit`, `crystal`: 0–1 how awake the pit's light and the crystal are. */
-  update(t: number, near: boolean, pit: number, crystal: number, flame: number, reduced: boolean): void {
+  /** Each frame. `pit`, `crystal`: 0–1 how awake the pit's light and the crystal are;
+      `frozen`: the session is paused (item 13) — the Duat's tellings hold their clocks. */
+  update(t: number, near: boolean, pit: number, crystal: number, flame: number, reduced: boolean, frozen = false): void {
     this.uT.value = reduced ? t * 0.4 : t;
     if (this.isInside && !this.doorFound && this.playerPos) {
       const dx = this.playerPos.x - (this.doorPos.x + PYR_ORIGIN.x);
@@ -1126,7 +1127,7 @@ export class Pyramid {
     this.duat.visible = inDuatSpace;
     const dt = Math.min(0.1, Math.max(0, t - this.lastT));
     this.lastT = t;
-    if (inDuatSpace && this.playerPos) this.night.update(t, dt, this.local.copy(this.playerPos).sub(DUAT_ORIGIN), reduced);
+    if (inDuatSpace && this.playerPos) this.night.update(t, dt, this.local.copy(this.playerPos).sub(DUAT_ORIGIN), reduced, frozen);
 
     this.uPit.value += (pit - this.uPit.value) * 0.05;
     this.uCrystal.value = crystal;
