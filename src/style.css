@@ -56,22 +56,26 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--gold); outl
 }
 @keyframes touch-mark { from { opacity: 0.9; transform: scale(0.4); } to { opacity: 0; transform: scale(1.6); } }
 
-/* ---- loading: a seed of light drawing itself, and a line to sit with ---- */
+/* ---- loading: a small seed of light in the corner, pulsing while it wakes the world. It sits
+   aside (the owner: never over the world's focal point), small enough to stay for mid-game
+   loads once the world streams its compartments, and it dismisses itself cleanly. ---- */
 #loading {
-  position: fixed; inset: 0; z-index: 60;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.2rem;
-  padding: 0 28px; text-align: center;
-  background: radial-gradient(ellipse at 50% 42%, #17143a 0%, var(--night) 62%);
+  position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); right: calc(env(safe-area-inset-right, 0px) + 14px);
+  z-index: 60;
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  padding: 10px 12px 8px; text-align: center;
+  border-radius: 14px;
+  background: rgba(10, 9, 24, 0.38);
   transition: opacity 1.6s ease;
 }
 #loading.done { opacity: 0; pointer-events: none; }
 #loading.dawn { transition-duration: 4s; }
 /* While the game boots, the page's own thread is busy for seconds (the code, the world, the
    shaders), so anything it has to animate stands still. The seed is therefore drawn whole, and
-   all the movement is transforms the compositor runs by itself: the seed turning, and a thin
-   ring of gold spinning round it until the world is ready. */
+   all the movement is what the compositor runs by itself: the seed turning, and the ring's
+   glow breathing (opacity and scale only) until the world is ready. */
 #loading .seed-wrap {
-  position: relative; width: min(34vw, 150px); aspect-ratio: 1;
+  position: relative; width: min(13vw, 54px); aspect-ratio: 1;
   animation: seed-turn 40s linear infinite; will-change: transform;
 }
 #loading .seed { width: 100%; height: 100%; overflow: visible; display: block; }
@@ -84,25 +88,27 @@ button:focus-visible, input:focus-visible { outline: 1px solid var(--gold); outl
 #loading .seed .heart { fill: #fff3d6; }
 #loading .boot-ring {
   position: absolute; inset: -16%; border-radius: 50%;
-  border: 1.5px solid rgba(226, 191, 126, 0.12); border-top-color: rgba(255, 226, 170, 0.9);
-  animation: boot-spin 1.3s linear infinite; will-change: transform; transition: opacity 1.2s ease;
+  border: 1.5px solid rgba(226, 191, 126, 0.3);
+  box-shadow: 0 0 14px rgba(255, 222, 160, 0.22), inset 0 0 9px rgba(255, 222, 160, 0.14);
+  /* the pulse is opacity and scale only — the compositor runs them while the page is busy */
+  animation: boot-pulse 2.6s ease-in-out infinite; will-change: transform, opacity; transition: opacity 1.2s ease;
 }
 #loading.done .boot-ring { opacity: 0; }
-@keyframes boot-spin { to { transform: rotate(360deg); } }
+@keyframes boot-pulse { 0%, 100% { opacity: 0.4; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } }
 #loading .seed .heart { animation: seed-breathe 5s ease-in-out infinite; transform-origin: 0 0; }
 body.loading #title h1, body.loading #title p { animation-play-state: paused; }
 @keyframes seed-turn { to { transform: rotate(360deg); } }
 /* how far the loading has come: a hairline of gold filling (a transform: it moves while the page
    is busy), and the number beneath */
-#boot-progress { display: flex; flex-direction: column; align-items: center; gap: 10px; width: min(56vw, 220px); transition: opacity 0.8s; }
+#boot-progress { display: flex; flex-direction: column; align-items: center; gap: 7px; width: min(30vw, 118px); transition: opacity 0.8s; }
 #boot-bar { width: 100%; height: 2px; border-radius: 1px; background: rgba(226, 191, 126, 0.16); overflow: hidden; }
 #boot-bar i { display: block; height: 100%; background: var(--gold); transform: scaleX(0.02); transform-origin: left; transition: transform 0.6s cubic-bezier(0.2, 0.6, 0.3, 1); box-shadow: 0 0 6px rgba(255, 215, 150, 0.6); }
-#boot-pct { margin: 0; font-size: 13px; font-style: italic; letter-spacing: 0.04em; color: var(--dim); font-variant-numeric: tabular-nums; }
+#boot-pct { margin: 0; font-size: 11px; font-style: italic; letter-spacing: 0.04em; color: var(--dim); font-variant-numeric: tabular-nums; }
 #loading.done #boot-progress { opacity: 0; }
 @keyframes seed-breathe { 0%, 100% { opacity: 0.55; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.25); } }
 @media (prefers-reduced-motion: reduce) {
   #loading .seed-wrap { animation: none; }
-  #loading .boot-ring { animation-duration: 4s; }
+  #loading .boot-ring { animation: none; opacity: 0.7; }
 }
 
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
