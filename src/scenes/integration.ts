@@ -78,7 +78,7 @@ export function initTourScenes(hooks: TourHooks2): TourScenes {
     hooks.narration,
     hooks.player,
     hooks.follow,
-    { whisper: hooks.whisper },
+    { whisper: hooks.whisper, wanderer: hooks.wanderer },
     hooks.temple,
   );
   const tree = new TreeOfLifeScene(

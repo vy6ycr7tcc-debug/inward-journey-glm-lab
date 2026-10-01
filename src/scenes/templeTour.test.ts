@@ -85,15 +85,20 @@ function makeTemple(): TempleLike {
     setFocus() {},
     entry: () => ({ x: TEMPLE_ORIGIN.x, z: TEMPLE_ORIGIN.z + 2, heading: Math.PI }),
     floorAt: () => 0,
+    choiceSeat: () => ({ x: TEMPLE_ORIGIN.x, z: TEMPLE_ORIGIN.z - 41.45, heading: 0 }),
   };
 }
 
+const gestures: string[] = [];
+
 function makeTour(temple = makeTemple()) {
+  gestures.length = 0;
   const narr = new FakeNarration();
   // the wanderer stands just inside the temple door (the temple sits far out in the world)
   const player: PlayerLike = { pos: new THREE.Vector3(TEMPLE_ORIGIN.x, 0, TEMPLE_ORIGIN.z + 6), heading: Math.PI, target: null };
   const follow: FollowLike = { yaw: Math.PI, pitch: 0.3, dist: 6, snapTo() {} };
-  const tour = new TempleTour(new THREE.Scene(), narr as unknown as import("../core/narration").Narration, player, follow, { whisper() {} } as TourHooks, temple);
+  const hooks: TourHooks = { whisper() {}, wanderer: { setGesture: (g) => gestures.push(g) } };
+  const tour = new TempleTour(new THREE.Scene(), narr as unknown as import("../core/narration").Narration, player, follow, hooks, temple);
   return { tour, narr, player };
 }
 
@@ -122,6 +127,10 @@ function nextBtn(tour: Tour): HTMLButtonElement {
 }
 function prevBtn(tour: Tour): HTMLButtonElement {
   return (tour as unknown as { prevBtn: HTMLButtonElement }).prevBtn;
+}
+function choiceBtn(tour: Tour, which: "rest" | "again" | "stay" | "leave"): HTMLButtonElement {
+  const key = which === "rest" ? "restBtn" : which === "again" ? "againBtn" : which === "stay" ? "stayBtn" : "leaveBtn";
+  return (tour as unknown as Record<string, HTMLButtonElement>)[key];
 }
 
 describe("the temple tour's automatic advance", () => {
@@ -192,6 +201,42 @@ describe("the temple tour's automatic advance", () => {
     tour.enter();
     for (let k = 0; k < 200; k++) step(tour, narr, player);
     expect(narr.plays.length).toBe(1);
+    tour.dispose();
+  });
+
+  it("the Choice: the room clears, the pilgrim sits, and the ending can be heard whole once more", () => {
+    const { tour, narr, player } = makeTour();
+    tour.enter();
+    for (let k = 0; k < 900 / 0.05; k++) {
+      step(tour, narr, player);
+      if (!document.getElementById("tour-choice")!.hidden) break;
+    }
+    const ask = document.querySelector("#tour-choice .ask")!;
+    expect(ask.textContent).toContain("Nothing is taken from you here");
+    // the wanderer walks to the seat and sits; the guiding light retires
+    for (let k = 0; k < 10 / 0.05; k++) step(tour, narr, player);
+    expect(gestures).toContain("sit");
+    expect(player.pos.z).toBeCloseTo(TEMPLE_ORIGIN.z - 41.45, 1);
+    const light = (tour as unknown as { light: { visible: boolean } }).light;
+    expect(light.visible).toBe(false); // its work is done; the room is cleared
+    // hear it again: the recording's own final part, whole (XXII through the landing)
+    const played = narr.plays.length;
+    press(choiceBtn(tour, "again"));
+    expect(narr.plays[played]).toMatchObject({ id: TRACK_ID, from: CUES[24].t, to: FINALE_T });
+    expect(ask.textContent).toContain("Listening");
+    // a replayed part is a part: the actions wait, and none of them cuts it
+    for (const which of ["rest", "again", "stay", "leave"] as const) expect(choiceBtn(tour, which).disabled).toBe(true);
+    const cutsBefore = narr.cuts.length;
+    press(choiceBtn(tour, "rest"));
+    press(choiceBtn(tour, "leave"));
+    expect(narr.cuts.length).toBe(cutsBefore);
+    expect((tour as unknown as { active: boolean }).active).toBe(true);
+    // the ending finishes; the actions come back; staying ends the tour and the pilgrim rises
+    for (let k = 0; k < (FINALE_T - CUES[24].t + 4) / 0.05; k++) step(tour, narr, player);
+    expect(choiceBtn(tour, "stay").disabled).toBe(false);
+    press(choiceBtn(tour, "stay"));
+    expect((tour as unknown as { active: boolean }).active).toBe(false);
+    expect(gestures[gestures.length - 1]).toBe("none");
     tour.dispose();
   });
 });
