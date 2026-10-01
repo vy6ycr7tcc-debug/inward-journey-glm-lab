@@ -603,6 +603,13 @@ export class Temple {
     alt.translate(CENTRE.x, 1.2 + 0.45, CENTRE.z);
     worldUV(alt, 2);
     stone.push(alt);
+    // the seat at the Choice: a low round stone on the dais' step, facing the altar — the
+    // pilgrim sits here for the choice (owner item 5)
+    const seat = new THREE.SphereGeometry(1, 28, 18).toNonIndexed();
+    seat.scale(0.52, 0.46, 0.44);
+    seat.translate(CENTRE.x, 0.72, CENTRE.z + 2.55);
+    worldUV(seat, 2);
+    stone.push(seat);
     // plinths for the Spirit's seven, in a ring
     this.ringSpots().forEach(({ x, z }) => {
       const p = new THREE.CylinderGeometry(1.6, 1.8, 0.6, 32).toNonIndexed();
@@ -871,6 +878,11 @@ export class Temple {
   standFor(i: number): { x: number; z: number; heading: number } {
     const s = this.spots[i];
     return { x: TEMPLE_ORIGIN.x + s.x, z: TEMPLE_ORIGIN.z + s.z, heading: s.heading };
+  }
+
+  /** The seat at the Choice's dais (world coords), facing the altar. */
+  choiceSeat(): { x: number; z: number; heading: number } {
+    return { x: TEMPLE_ORIGIN.x + CENTRE.x, z: TEMPLE_ORIGIN.z + CENTRE.z + 2.55, heading: 0 };
   }
 
   shrineInfo(i: number): { numeral: string; name: string; tint: THREE.Color } {

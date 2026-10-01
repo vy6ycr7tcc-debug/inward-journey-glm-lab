@@ -461,6 +461,8 @@ body.touring :is(#tour-panel, #walk-panel), body.touring #tour-choice { bottom: 
 }
 #tour-choice[hidden] { display: none; }
 #tour-choice button { font-size: 16px; font-style: italic; color: var(--gold); min-height: 44px; padding: 6px 16px; border-radius: 22px; border: 1px solid rgba(214, 170, 90, 0.45); }
+#tour-choice button:disabled { opacity: 0.4; pointer-events: none; }
+#tour-choice .ask { margin: 0 auto 10px; max-width: 24em; font-size: 13.5px; line-height: 1.5; font-style: italic; color: rgba(240, 232, 214, 0.92); }
 /* the rite's words: low in the view, one line at a time, slow to come and go */
 #rite-words {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 7; margin: 0;

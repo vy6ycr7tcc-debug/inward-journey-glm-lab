@@ -21,6 +21,8 @@ export const FINALE_T = 636.08;
 
 export interface TourHooks {
   whisper: (text: string, ms?: number) => void;
+  /** The wanderer's body: the tour seats them at the Choice (owner item 5). */
+  wanderer?: { setGesture(g: "none" | "sit" | "reach" | "touch"): void };
 }
 /** What the tour needs of the temple. */
 export interface TempleLike {
@@ -30,6 +32,8 @@ export interface TempleLike {
   setFocus?(i: number): void;
   entry(): { x: number; z: number; heading: number };
   floorAt(x: number, z: number): number;
+  /** The seat at the Choice's dais (world coords), facing the altar. */
+  choiceSeat?(): { x: number; z: number; heading: number };
 }
 export interface PlayerLike {
   pos: THREE.Vector3;
@@ -198,6 +202,18 @@ export class TempleTour implements SceneModule {
   private prevBtn: HTMLButtonElement;
   private nextBtn: HTMLButtonElement;
   private choice: HTMLDivElement;
+  private choiceAsk: HTMLElement;
+  private restBtn: HTMLButtonElement;
+  private stayBtn: HTMLButtonElement;
+  private againBtn: HTMLButtonElement;
+  private leaveBtn: HTMLButtonElement;
+  /** The offered end: the light retires, the wanderer walks to the seat and sits. */
+  private offeredT = 0;
+  private lightSink = 0;
+  private seat: { x: number; z: number; heading: number } | null = null;
+  private seated = false;
+  /** A replayed ending is a part like any other: it plays whole, never cut. */
+  private replay = false;
   private goal = new THREE.Vector2();
   private readonly dir = new THREE.Vector2();
   /** The wanderer's own way to the stop (world x, z), walked one point after another. */
@@ -209,7 +225,7 @@ export class TempleTour implements SceneModule {
     private narration: Narration,
     private player: PlayerLike,
     private follow: FollowLike,
-    _hooks: TourHooks,
+    private hooks: TourHooks,
     private temple: TempleLike,
   ) {
     // the guiding light: a small bright core in a soft glow, contained
@@ -247,11 +263,15 @@ export class TempleTour implements SceneModule {
     mid.append(this.titleEl, this.hintEl);
     this.panel.append(this.prevBtn, mid, this.nextBtn, end);
     document.body.append(this.panel);
-    // the end: rest at the tree, or stay
+    // the end: the room cleared, the wanderer seated at the dais — rest, remain, or hear the
+    // ending once more (the recording is the narration's own; no words are added to it)
     this.choice = Object.assign(document.createElement("div"), { id: "tour-choice", hidden: true });
-    const rest = btn("Rest at the tree of life", "", "Rest at the tree of life");
-    const stay = btn("Stay in the temple", "", "Stay in the temple");
-    this.choice.append(rest, stay);
+    this.choiceAsk = Object.assign(document.createElement("p"), { className: "ask" });
+    this.restBtn = btn("Rest at the tree of life", "", "Rest at the tree of life");
+    this.againBtn = btn("Hear it again", "", "Hear the ending once more");
+    this.stayBtn = btn("Stay in the temple", "", "Stay in the temple");
+    this.leaveBtn = btn("✕", "end", "Leave the choice for now");
+    this.choice.append(this.choiceAsk, this.restBtn, this.againBtn, this.stayBtn, this.leaveBtn);
     document.body.append(this.choice);
     // on the touch itself (a phone sends no click while the other thumb holds the stick);
     // a keyboard's Enter or Space still clicks
@@ -266,8 +286,12 @@ export class TempleTour implements SceneModule {
     act(this.prevBtn, () => this.go(this.index - 1));
     act(this.nextBtn, () => this.next());
     act(end, () => this.exit());
-    act(rest, () => this.choose("rest"));
-    act(stay, () => this.choose("stay"));
+    act(this.restBtn, () => this.choose("rest"));
+    act(this.stayBtn, () => this.choose("stay"));
+    act(this.againBtn, () => this.hearAgain());
+    act(this.leaveBtn, () => {
+      if (!this.replay) this.exit(); // a replayed part is never cut
+    });
   }
 
   /* ---------- lifecycle ---------- */
@@ -278,6 +302,11 @@ export class TempleTour implements SceneModule {
     document.body.classList.add("touring");
     this.stops = buildStops(this.temple);
     this.lifeT = 0;
+    this.offeredT = 0;
+    this.lightSink = 0;
+    this.seat = null;
+    this.seated = false;
+    this.replay = false;
     this.choice.hidden = true;
     this.panel.hidden = false;
     this.light.visible = this.halo.visible = true;
@@ -301,6 +330,8 @@ export class TempleTour implements SceneModule {
     this.active = false;
     this.player.target = null;
     this.walk = [];
+    this.replay = false;
+    this.hooks.wanderer?.setGesture("none"); // rising, wherever the choice found them
     this.temple.setFocus?.(-1);
     document.body.classList.remove("touring");
     if (this.follow.dist !== undefined) this.follow.dist = this.view.dist;
@@ -394,15 +425,18 @@ export class TempleTour implements SceneModule {
       moving = true;
     }
     const lx = O.x + this.lightAt.x + (moving ? 0 : Math.cos(this.lifeT * 0.7) * 0.35), lz = O.z + this.lightAt.y + (moving ? 0 : Math.sin(this.lifeT * 0.7) * 0.35);
-    const ly = this.temple.floorAt(lx, lz) + 2.2 + Math.sin(this.lifeT * 1.3) * 0.1;
+    if (this.phase === "offered" && !moving) this.lightSink += step * 0.35; // it sinks as it fades
+    const ly = this.temple.floorAt(lx, lz) + 2.2 + Math.sin(this.lifeT * 1.3) * 0.1 - this.lightSink;
     this.light.position.set(lx, ly, lz);
     this.halo.position.copy(this.light.position);
     const fade = smooth(this.lifeT / 1.5);
     const breathe = 0.8 + 0.2 * Math.sin(this.lifeT * 1.1);
     // brighter while it leads (it asks to be followed), quiet while a shrine speaks
     const lead = this.phase === "leading" ? 1 : this.phase === "done" ? 0.8 : 0.45;
-    this.lightMat.opacity = fade * breathe * (0.55 + 0.45 * lead);
-    this.haloMat.opacity = fade * breathe * 0.18 * lead;
+    const retire = this.phase === "offered" ? Math.max(0, 1 - this.offeredT / 3.5) : 1;
+    this.lightMat.opacity = fade * breathe * (0.55 + 0.45 * lead) * retire;
+    this.haloMat.opacity = fade * breathe * 0.18 * lead * retire;
+    if (this.phase === "offered" && retire <= 0) this.light.visible = this.halo.visible = false;
 
     // the wanderer walks its way, point after point, and arrives at the standing place
     const px = this.player.pos.x - O.x, pz = this.player.pos.z - O.z;
@@ -413,8 +447,9 @@ export class TempleTour implements SceneModule {
       else if (!this.walk.length) this.player.target = new THREE.Vector2(this.goal.x + O.x, this.goal.y + O.z);
     }
     // the view: behind the wanderer while it walks; at a shrine it comes round and draws a
-    // little closer, framing the archetype over the wanderer's shoulder
-    const at = this.phase !== "leading" && s.shrine >= 0;
+    // little closer, framing the archetype over the wanderer's shoulder (the offered end
+    // leaves the pilgrim alone at the seat — nothing steers them any more)
+    const at = this.phase !== "leading" && this.phase !== "offered" && s.shrine >= 0;
     if (at) {
       let dh = s.heading - this.player.heading;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
@@ -457,16 +492,67 @@ export class TempleTour implements SceneModule {
         } else this.go(this.index + 1);
       }
     }
+    // the offered end: the walk to the seat and the sitting; a replayed ending is a part
+    // like any other — it plays whole, and only then do the actions return
+    if (this.phase === "offered") {
+      this.offeredT += step;
+      if (this.seat && !this.seated && this.player.target) {
+        const d = Math.hypot(this.player.pos.x - this.seat.x, this.player.pos.z - this.seat.z);
+        if (d < 0.5) {
+          this.player.target = null;
+          this.player.pos.x = this.seat.x;
+          this.player.pos.z = this.seat.z;
+          this.player.heading = this.seat.heading;
+          this.follow.yaw = this.seat.heading;
+          this.seated = true;
+          this.hooks.wanderer?.setGesture("sit");
+        }
+      }
+      if (this.replay) {
+        const s = this.stops[this.index];
+        const t = this.narration.time();
+        if (this.narration.debugTime === null && (t >= s.to - 0.15 || this.narration.current !== TRACK_ID)) {
+          this.replay = false;
+          this.refreshChoice();
+        }
+      }
+    }
   }
 
   private showChoice(): void {
     this.panel.hidden = true;
     this.choice.hidden = false;
     this.rite(-1);
+    // the room clears: the light's work is done — it sinks into the floor and is gone
+    this.offeredT = 0;
+    this.lightSink = 0;
+    // the pilgrim is walked to the seat at the dais, and sits for the choice
+    this.seat = this.temple.choiceSeat?.() ?? null;
+    this.seated = false;
+    this.replay = false;
+    if (this.seat) this.player.target = new THREE.Vector2(this.seat.x, this.seat.z);
+    this.refreshChoice();
+  }
+
+  private refreshChoice(): void {
+    this.choiceAsk.textContent = this.replay
+      ? "Listening — the ending, once more."
+      : "Nothing is taken from you here. Rest, remain, or hear the ending once more.";
+    for (const b of [this.restBtn, this.stayBtn, this.againBtn, this.leaveBtn]) b.disabled = this.replay;
+  }
+
+  /** Sit (again) with the ending: the recording's own last part, whole, never cut. */
+  private hearAgain(): void {
+    if (this.phase !== "offered" || this.replay) return;
+    const s = this.stops[this.index];
+    this.replay = true;
+    this.refreshChoice();
+    void this.narration.play(TRACK_ID, s.from, s.to);
   }
 
   /** The end: rest at the tree of life, or stay in the temple and walk freely. */
   choose(key: "rest" | "stay"): void {
+    if (this.replay) return; // a replayed part is never cut
     this.exit();
     if (key === "rest") this.onRest?.();
   }
