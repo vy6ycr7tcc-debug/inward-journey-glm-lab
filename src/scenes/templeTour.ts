@@ -388,6 +388,11 @@ export class TempleTour implements SceneModule {
     this.refresh();
   }
 
+  /** The shrine the tour stands at (−1 at the door), for the camera's gravity (item 14). */
+  get stopShrine(): number {
+    return this.stops[this.index]?.shrine ?? -1;
+  }
+
   private rite(i: number): void {
     if (i === this.riteOn) return;
     if (this.riteOn >= 0) this.temple.setRite(this.riteOn, false);

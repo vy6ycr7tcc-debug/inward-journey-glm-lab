@@ -263,6 +263,25 @@ player.heading = SPAWN.heading;
 const footprints = new Footprints();
 scene.add(footprints.mesh);
 const follow = new FollowCamera(camera);
+/** Where the camera may stand (item 14): inside the temple's hall and sanctuary, inside a
+    monument's room — pulled in along its own line to the wanderer, never a wall between. */
+const camConfined = new THREE.Vector3();
+follow.confine = (p) => {
+  if (temple.inside) {
+    camConfined.copy(p);
+    temple.confine(camConfined);
+    return camConfined;
+  }
+  const h = inHall();
+  if (h && h.journey.inside) {
+    camConfined.set(p.x - JOURNEY_ORIGIN.x, p.y, p.z - JOURNEY_ORIGIN.z);
+    h.journey.confineCamera(camConfined);
+    camConfined.x += JOURNEY_ORIGIN.x;
+    camConfined.z += JOURNEY_ORIGIN.z;
+    return camConfined;
+  }
+  return p;
+};
 
 /* ============ AUDIO ============ */
 const audio = new AudioEngine("audio/water-bed.mp3");
@@ -1745,6 +1764,8 @@ function contemplationFrame(dt: number): void {
    back. */
 function gravityPoint(): THREE.Vector3 | null {
   if (S.mode !== "play" || !narration.progress()) return null;
+  // the temple tour (item 14): at a stop, the archetype it speaks of is the subject
+  if (tourScenes.tour.active) return temple.focusFor(tourScenes.tour.stopShrine);
   const h = inHall();
   if (h) return h.journey.inside && !h.journey.crossing ? h.journey.centre() : null;
   const id = tourScenes.seatedId;
@@ -1753,10 +1774,16 @@ function gravityPoint(): THREE.Vector3 | null {
   return m?.focus?.clone() ?? null;
 }
 const GRAVITY_AFTER = 2500;
+const frameDrift = new THREE.Vector3();
 function gravityFrame(dt: number): void {
-  const g = document.body.classList.contains("touring") && !walk ? null : gravityPoint();
+  // the temple tour once excluded itself here; item 14 builds on the gravity work instead —
+  // the tours frame their subjects now, and the walks always did
+  const g = gravityPoint();
   follow.frame = g;
   if (!g) return;
+  // the subject is held with a gentle drift, so a held shot breathes rather than freezes
+  const dr = g.distanceTo(player.pos) * 0.02;
+  follow.frame = g.add(frameDrift.set(Math.sin(S.t * 0.06) * dr, Math.sin(S.t * 0.045 + 2) * dr * 0.4, Math.cos(S.t * 0.05) * dr * 0.3));
   const idle = performance.now() - lastTouch > GRAVITY_AFTER && Math.hypot(input.move.x, input.move.y) < 0.05 && !input.hold;
   follow.frameHold = idle ? 1 : 0.35;
   if (!idle || player.speed > 0.3 || faceFor > 0) return;
