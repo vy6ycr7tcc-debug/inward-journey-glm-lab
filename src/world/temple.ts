@@ -7,11 +7,15 @@
    - The hypostyle hall: two rows of papyrus-bundle columns, painted in faded bands, under a blue
      ceiling of gold stars; the walls carved in registers of glyph-like forms; light falling in
      shafts from the clerestory along the aisle; braziers.
-   - Along its walls, fourteen shrines: the Mind's seven on the left (I–VII), the Body's seven on
-     the right (VIII–XIV). In each stands the archetype as on its card (the same beings as in the
-     world, recreated from Samuel's Ra tarot), on a plinth in a carved niche, its numeral above.
-   - Through a gateway, the sanctuary: the Spirit's seven (XV–XXI) in a ring, facing the centre,
-     where the Choice (XXII) stands on a round dais in a shaft of light from an opening above.
+   - The hall is three rooms in a row (the owner: "make Mind / Body / Spirit unmistakable"): the
+     Mind's seven (I–VII) fill the first three niche rows by the door, its light cool and high;
+     a threshold — an ember inlay and cartouches — then the Body's seven (VIII–XIV) run to the
+     gateway, warm as hearth light. In each shrine stands the archetype as on its card (the same
+     beings as in the world, recreated from Samuel's Ra tarot), on a plinth in a carved niche,
+     its numeral above.
+   - Through the gateway — its star cartouche — the sanctuary: the Spirit's seven (XV–XXI) in a
+     ring, facing the centre, where the Choice (XXII) stands on a round dais in a shaft of light
+     from an opening above.
    Walk back out through the door you came in by. */
 import * as THREE from "three/webgpu";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -306,6 +310,46 @@ function numeralTexture(numeral: string, name: string, tint: THREE.Color): THREE
   g.fillRect(196, 134, 120, 2);
   return canvasTexture(c, false);
 }
+
+/** A realm's name cut and gilded like the numeral plaques, a thread of the realm's colour under
+    it — the cartouche that names each room: "THE MIND", "THE BODY", "THE SPIRIT". */
+function realmTexture(text: string, tint: THREE.Color): THREE.CanvasTexture {
+  const [c, g] = canvas(512, 128);
+  g.fillStyle = "#a88a62";
+  g.fillRect(0, 0, 512, 128);
+  for (let k = 0; k < 700; k++) {
+    g.fillStyle = `rgba(${k % 2 ? "60,44,28" : "220,196,160"},${0.05 + Math.random() * 0.06})`;
+    g.fillRect(Math.random() * 512, Math.random() * 128, 1 + Math.random() * 3, 1 + Math.random() * 2);
+  }
+  g.strokeStyle = "rgba(50,34,20,0.7)";
+  g.lineWidth = 3;
+  g.strokeRect(20, 10, 472, 108);
+  g.strokeStyle = "rgba(235,212,170,0.45)";
+  g.lineWidth = 1.5;
+  g.strokeRect(22, 12, 472, 108);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.font = "600 46px Georgia, 'Times New Roman', serif";
+  g.fillStyle = "rgba(235,212,170,0.5)";
+  g.fillText(text, 257.5, 60.5);
+  g.fillStyle = "rgba(45,30,16,0.85)";
+  g.fillText(text, 255, 58);
+  g.fillStyle = "#c9a256";
+  g.fillText(text, 256, 59);
+  g.fillStyle = `rgb(${Math.round(Math.min(1, tint.r * 0.8) * 255)},${Math.round(Math.min(1, tint.g * 0.8) * 255)},${Math.round(Math.min(1, tint.b * 0.8) * 255)})`;
+  g.fillRect(206, 92, 100, 2);
+  return canvasTexture(c, false);
+}
+
+/** The hall's fourteen shrines walk the visitor through two rooms in a row (the Spirit keeps
+    the ring beyond the gateway): [niche row, side] per shrine — the Mind down the first three
+    rows, the threshold at the fourth, the Body from there to the gateway. Within a room the
+    shrines alternate across the aisle — a procession — and every crossing runs between the
+    columns (niche rows sit between the column rows). */
+const HALL_PLAN: [number, -1 | 1][] = [
+  [0, -1], [0, 1], [1, -1], [1, 1], [2, -1], [2, 1], [3, -1], // I–VII — the Mind
+  [3, 1], [4, -1], [4, 1], [5, -1], [5, 1], [6, -1], [6, 1], // VIII–XIV — the Body
+];
 
 /* ---------- geometry ---------- */
 
@@ -740,7 +784,7 @@ export class Temple {
       return { label, tint };
     };
     for (let k = 0; k < 14; k++) {
-      const side = k < 7 ? -1 : 1, nz = NICHE_Z[k % 7];
+      const [row, side] = HALL_PLAN[k], nz = NICHE_Z[row];
       const { label, tint } = place(k, side * (HALL_X + 1.9), 0.55, nz, side < 0 ? Math.PI / 2 : -Math.PI / 2);
       // the back of the niche glows softly in the archetype's own colour, so each shrine has its light
       const gm = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
@@ -1141,8 +1185,8 @@ export class Temple {
       this.group.add(d.sprite);
       this.dust = { pos: d.position, base: p.slice() };
     }
-    // the sanctuary's light: from the opening above, onto the dais
-    const top = new THREE.PointLight(0xfff0d0, 22, 26, 1.4);
+    // the sanctuary's light: from the opening above, onto the dais — starlit, the Spirit's own
+    const top = new THREE.PointLight(0xe8ecff, 22, 26, 1.4);
     top.position.set(CENTRE.x, 11, CENTRE.z);
     this.group.add(top);
     this.focus.hall.push({ l: top, base: top.intensity });
@@ -1151,7 +1195,7 @@ export class Temple {
     // Shafts of light: soft volumes, not flat planes. Each is an open tube of light, brightest
     // where you look through its depth and fading at its edges, with dust turning slowly in it;
     // it melts away near the lens, and lays a soft pool of light where it meets the floor.
-    const shaft = (w: number, h: number, x: number, y: number, z: number, tilt: number, k: number) => {
+    const shaft = (w: number, h: number, x: number, y: number, z: number, tilt: number, k: number, col: [number, number, number] = [1.0, 0.86, 0.62]) => {
       const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.FrontSide, fog: false });
       const u = uv();
       const view = T.normalize(T.cameraPosition.sub(positionWorld));
@@ -1159,18 +1203,18 @@ export class Temple {
       const along = smoothstep(0, 0.18, u.y).mul(smoothstep(1, 0.7, u.y).mul(0.55).add(0.45));
       const dustK = vnoise(vec2(u.x.mul(9), u.y.mul(5).sub(this.uT.mul(0.03)))).mul(0.6).add(vnoise(vec2(u.x.mul(23), u.y.mul(14).add(this.uT.mul(0.05)))).mul(0.4));
       const near = smoothstep(0.8, 4, length(T.cameraPosition.sub(positionWorld)));
-      m.colorNode = vec4(vec3(1.0, 0.86, 0.62).mul(through.mul(along).mul(dustK.mul(0.7).add(0.5)).mul(near).mul(k)), 1);
+      m.colorNode = vec4(vec3(col[0], col[1], col[2]).mul(through.mul(along).mul(dustK.mul(0.7).add(0.5)).mul(near).mul(k)), 1);
       this.shafts.push(m);
       const tube = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.5, w * 0.62, h, 24, 1, true), m);
       tube.position.set(x, y, z);
       tube.rotation.set(0, 0, tilt);
       tube.renderOrder = 5;
       this.group.add(tube);
-      // where it falls: a soft warm pool on the floor, stretched along the slant
+      // where it falls: a soft pool of its own colour on the floor, stretched along the slant
       const foot = new THREE.Vector3(0, -h / 2, 0).applyEuler(new THREE.Euler(0, 0, tilt)).add(new THREE.Vector3(x, y, z));
       const pm = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
       const pr = length(uv().sub(0.5)).mul(2);
-      pm.colorNode = vec4(vec3(1.0, 0.8, 0.55).mul(smoothstep(1, 0.2, pr).mul(k * 1.6)), 1);
+      pm.colorNode = vec4(vec3(col[0], col[1] * 0.93, col[2] * 0.85).mul(smoothstep(1, 0.2, pr).mul(k * 1.6)), 1);
       const pool = new THREE.Mesh(new THREE.PlaneGeometry(w * (1.3 + Math.abs(Math.tan(tilt)) * 1.6), w * 1.3), pm);
       pool.rotation.x = -Math.PI / 2;
       pool.position.set(foot.x, 0.03 + (foot.z < HALL_Z1 ? 0.3 : 0), foot.z);
@@ -1193,8 +1237,47 @@ export class Temple {
     sky.position.set(CENTRE.x, WALL_H + 2 + 1.5, CENTRE.z);
     sky.rotation.x = Math.PI / 2;
     this.group.add(sky);
-    for (let z = HALL_Z0 - 6; z > HALL_Z1 + 3; z -= 12) shaft(1.3, 16, -1.2, 7.5, z - 0.8, 0.42, 0.11);
-    this.centreShaft = shaft(4.6, 15, CENTRE.x, 8.5, CENTRE.z, 0, 0.1);
+    // the hall's shafts wear each room's light: the Mind's cool and high by the door, the
+    // Body's warm past the threshold; the sanctuary's own shaft keeps the warm day colour
+    for (let z = HALL_Z0 - 6; z > HALL_Z1 + 3; z -= 12)
+      shaft(1.3, 16, -1.2, 7.5, z - 0.8, 0.42, 0.11, z > 0 ? [0.74, 0.83, 1.05] : [1.0, 0.78, 0.52]);
+    this.centreShaft = shaft(4.6, 15, CENTRE.x, 8.5, CENTRE.z, 0, 0.1, [0.74, 0.82, 1.05]);
+    this.buildRooms();
+  }
+
+  /** The three rooms the hall now walks through (the owner asked that Mind, Body and Spirit be
+      unmistakable): each realm named in a gilded cartouche and marked by a breathing inlay in
+      the floor, and its own light — the Mind's shafts cool and high by the door, the Body's
+      warm as ember light past the threshold, the Spirit starlit round the dais beyond the
+      gateway. Nothing is rebuilt; the marks hang on walls that were always there. */
+  private buildRooms(): void {
+    const mind = new THREE.Color(0.55, 0.68, 1.0), body = new THREE.Color(1.0, 0.6, 0.3), spirit = new THREE.Color(0.62, 0.72, 1.0);
+    const cartouche = (text: string, tint: THREE.Color, w: number, x: number, y: number, z: number, ry: number) => {
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.25), new THREE.MeshStandardNodeMaterial({ map: realmTexture(text, tint), roughness: 0.85 }));
+      p.position.set(x, y, z);
+      p.rotation.y = ry;
+      this.group.add(p);
+    };
+    // the Mind: at the head of its room, on both walls by the door
+    for (const side of [-1, 1]) cartouche("THE MIND", mind, 4.6, side * (HALL_X - 0.4), 9.3, 29.3, side < 0 ? Math.PI / 2 : -Math.PI / 2);
+    // the threshold: the Body's name at the fourth niche row, where its seven begin
+    for (const side of [-1, 1]) cartouche("THE BODY", body, 4.6, side * (HALL_X - 0.4), 8.6, -3.7, side < 0 ? Math.PI / 2 : -Math.PI / 2);
+    // the Spirit: over the gateway, read on the way in to the ring
+    cartouche("THE SPIRIT", spirit, 5.2, 0, 11.4, HALL_Z1 - 1.0, 0);
+    // the inlays: a band of light across the floor at each threshold, breathing unhurried
+    const inlay = (z: number, y: number, tint: THREE.Color, w: number) => {
+      const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+      const breathe = T.sin(this.uT.mul(0.5)).mul(0.12).add(0.88);
+      m.colorNode = vec4(vec3(tint.r, tint.g, tint.b).mul(breathe.mul(0.14)), 1);
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(w, 1.9), m);
+      p.rotation.x = -Math.PI / 2;
+      p.position.set(0, y, z);
+      p.renderOrder = 1;
+      this.group.add(p);
+    };
+    inlay(29.3, 0.04, mind, HALL_X * 2 - 4); // the Mind's, just inside the door
+    inlay(-3.7, 0.04, body, HALL_X * 2 - 4); // the Body's, at the fourth row
+    inlay(-32.4, 0.34, spirit, 11); // the Spirit's, on the sanctuary's raised floor
   }
 
   /** The pylon in the open world: two battered towers and a door between them, glowing within. */
