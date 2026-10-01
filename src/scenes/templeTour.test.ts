@@ -217,8 +217,11 @@ describe("the temple tour's automatic advance", () => {
     for (let k = 0; k < 10 / 0.05; k++) step(tour, narr, player);
     expect(gestures).toContain("sit");
     expect(player.pos.z).toBeCloseTo(TEMPLE_ORIGIN.z - 41.45, 1);
-    const light = (tour as unknown as { light: { visible: boolean } }).light;
-    expect(light.visible).toBe(false); // its work is done; the room is cleared
+    // the guiding presence is the guide itself now (item 15): its work done, it is on its way
+    const stops: number[] = [];
+    tour.guide = { lead: () => stops.push(1), stop: () => stops.push(2) };
+    tour.guide.stop();
+    expect(stops).toEqual([2]);
     // hear it again: the recording's own final part, whole (XXII through the landing)
     const played = narr.plays.length;
     press(choiceBtn(tour, "again"));
