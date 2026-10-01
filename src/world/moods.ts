@@ -166,6 +166,11 @@ const MOODS: { mood: Mood; dir: [number, number] | null }[] = [
 ];
 export const MOOD_NAMES = ["night", "sunrise", "sunset", "deep", "twilight", "golden", "dusk", "ember", "dawn"];
 
+/** Blending reads these every frame: hoisted so the blend allocates nothing. */
+const MOOD_MOODS = MOODS.map((x) => x.mood);
+const COLOUR_KEYS: (keyof Mood)[] = ["zen", "mid", "hor", "fog", "glow", "sunCol", "light", "hemiSky", "hemiGround", "cloudShade", "cloudLight"];
+const SCALAR_KEYS = ["sunK", "stars", "deep", "moonK", "hemi", "env", "density"] as const;
+
 export interface MoodTargets {
   hemi: THREE.HemisphereLight;
   star: THREE.DirectionalLight;
@@ -200,25 +205,32 @@ export class Moods {
       this.w[i] += (want[i] - this.w[i]) * k;
       this.drift += Math.abs(this.w[i] - before);
     }
-    this.weights = [...this.w];
+    // the same array, refilled in place (a fresh one every frame littered the heap)
+    for (let i = 0; i < this.w.length; i++) this.weights[i] = this.w[i];
     this.blend();
     this.apply();
   }
 
   private blend(): void {
-    const ms = MOODS.map((x) => x.mood), w = this.w, m = this.cur;
-    const colours: (keyof Mood)[] = ["zen", "mid", "hor", "fog", "glow", "sunCol", "light", "hemiSky", "hemiGround", "cloudShade", "cloudLight"];
-    for (const key of colours) {
+    const ms = MOOD_MOODS, w = this.w, m = this.cur;
+    for (const key of COLOUR_KEYS) {
       const out = m[key] as THREE.Color;
       out.setRGB(0, 0, 0);
-      ms.forEach((x, i) => out.add((x[key] as THREE.Color).clone().multiplyScalar(w[i])));
+      // accumulated into one reused scratch colour: this runs every frame, and the clone per
+      // mood per key (~100 allocations a frame, forever) showed in profiles (owner item 10)
+      for (let i = 0; i < ms.length; i++) out.add(this.scratch.copy(ms[i][key] as THREE.Color).multiplyScalar(w[i]));
     }
-    for (const key of ["sunK", "stars", "deep", "moonK", "hemi", "env", "density"] as const) m[key] = ms.reduce((s, x, i) => s + x[key] * w[i], 0);
+    for (const key of SCALAR_KEYS) {
+      let s = 0;
+      for (let i = 0; i < ms.length; i++) s += ms[i][key] * w[i];
+      m[key] = s;
+    }
     // the low sun stands where the dawn or the dusk is strongest
     m.sun.copy(SUNRISE.sun).multiplyScalar(1e-3);
     ms.forEach((x, i) => m.sun.addScaledVector(x.sun, w[i] * x.sunK));
     m.sun.normalize();
   }
+  private scratch = new THREE.Color();
 
   private apply(): void {
     const m = this.cur, S = skyUniforms;
