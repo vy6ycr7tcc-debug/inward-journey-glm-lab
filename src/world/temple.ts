@@ -418,8 +418,9 @@ export class Temple {
   private firePits: THREE.Vector3[] = [];
   private dust!: { pos: THREE.InstancedBufferAttribute; base: Float32Array };
   private flames: { light: THREE.PointLight; sprite: THREE.Sprite; base: number; phase: number }[] = [];
-  /** The tour's focus: the shrine spoken about lit by a warm spot, the hall dimmed round it. */
-  private focus = { i: -1, k: 0, spot: null as THREE.SpotLight | null, hall: [] as { l: THREE.Light; base: number }[] };
+  /** The tour's focus: the shrine spoken about glows from within (its being's own light rising),
+      the hall dimmed round it. */
+  private focus = { i: -1, k: 0, hall: [] as { l: THREE.Light; base: number }[] };
   private shafts: THREE.MeshBasicNodeMaterial[] = [];
   private uT = uniform(0);
   private local = new THREE.Vector3();
@@ -833,16 +834,14 @@ export class Temple {
     return { numeral: s.numeral, name: s.name, tint: new THREE.Color(...s.beings.list[0].spec.tint) };
   }
 
-  /** Light shrine `i` for the tour (−1: none): a warm spot on its being, the hall dimmed round it. */
+  /** Light shrine `i` for the tour (−1: none): the archetype's own light rises — its image
+      glows from within, no light aimed at it — while the hall dims round it. */
   setFocus(i: number): void {
     this.focus.i = i;
-    const sp = this.focus.spot, b = this.shrines[i]?.beings.list[0];
-    if (!sp || !b) return;
-    const at = b.root.getWorldPosition(new THREE.Vector3()).sub(TEMPLE_ORIGIN);
-    const st = this.spots[i];
-    // from above the standing place, a little behind it, down onto the being's chest
-    sp.position.set(st.x + (st.x - at.x) * 0.4, 7.5, st.z + (st.z - at.z) * 0.4);
-    sp.target.position.set(at.x, at.y + 1.6, at.z);
+    for (let k = 0; k < this.shrines.length; k++) {
+      const b = this.shrines[k]?.beings.list[0];
+      if (b) b.focus = k === i ? 1 : 0;
+    }
   }
 
   /** The being of shrine `i` begins or ends its rite. */
@@ -1104,10 +1103,6 @@ export class Temple {
     sun.shadow.bias = -0.0006;
     this.group.add(sun, sun.target);
     this.focus.hall.push({ l: sun, base: sun.intensity });
-    // the tour's spot: soft-edged, warm, from above and in front of the shrine it lights
-    const spot = new THREE.SpotLight(0xffe2b0, 0, 16, 0.36, 0.75, 1.2);
-    this.group.add(spot, spot.target);
-    this.focus.spot = spot;
     // braziers: fire in bronze bowls, down the aisle and at the gateway
     const fire = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
     const r = length(uv().sub(0.5)).mul(2);
@@ -1338,8 +1333,9 @@ export class Temple {
     {
       const f = this.focus;
       f.k += ((f.i >= 0 ? 1 : 0) - f.k) * Math.min(1, dt * 1.2);
+      // the hall dims round the shrine being spoken about; the being itself glows
+      // from within (its own `focus`), so no light is aimed at it
       for (const h of f.hall) h.l.intensity = h.base * (1 - 0.55 * f.k);
-      if (f.spot) f.spot.intensity = 50 * f.k;
     }
     // the dust drifts, slowly turning in the still air
     {

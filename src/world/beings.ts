@@ -181,6 +181,11 @@ class Being {
   rite = 0;
   riteK = 0;
   riteT = 0;
+  /** The tour's attention is on it (target 0 or 1; `focusK` eases toward it): its own light
+      rises — the light seems to come from the archetype, not to be aimed at it. */
+  focus = 0;
+  private focusK = 0;
+  private haloBase = 2.6;
   private rig: Rig | null = null;
   /** Posed at least once (a being never updated would stand in its bind pose). */
   private posed = false;
@@ -219,7 +224,8 @@ class Being {
       this.root.add(this.glyph.mesh);
       this.props.visible = false;
       this.halo.position.y = GLYPH_H * 0.55 - spec.at[1];
-      this.halo.scale.setScalar(4.2);
+      this.haloBase = 4.2;
+      this.halo.scale.setScalar(this.haloBase);
     }
   }
 
@@ -291,7 +297,7 @@ class Being {
       // held still while out of the nearest two: its motes still gather and turn, a few times a second
       if (!show && d0 < 160 && (this.figureTick += dt) > 0.2) {
         this.root.updateMatrixWorld(true);
-        this.figure.update(this.figureTick, t, d0 < 45, 0.85 + this.wake * 0.3, reduced);
+        this.figure.update(this.figureTick, t, d0 < 45, 0.85 + this.wake * 0.3 + this.focusK * 0.55, reduced);
         this.figureTick = 0;
       }
     }
@@ -305,6 +311,14 @@ class Being {
     this.halo.material.opacity = 0.18 + this.wake * 0.25 + greet * 0.4;
     this.ringMat.opacity = greet * 0.6;
     this.ring.scale.setScalar(1 + (1 - greet) * 7);
+    // the tour's attention: the archetype brightens from within — its light body rises, its
+    // halo breathes wider — while the hall itself dims (temple.setFocus). No light is aimed.
+    this.focusK += (this.focus - this.focusK) * Math.min(1, dt * 1.2);
+    if (this.focusK > 0.001) {
+      this.U.uPulse.value += this.focusK * 0.55;
+      this.halo.material.opacity += this.focusK * 0.3;
+      this.halo.scale.setScalar(this.haloBase * (1 + 0.28 * this.focusK));
+    }
 
     // It turns toward you as you come near; seated ones only a little.
     const want = near ? Math.atan2(-(player.x - this.root.position.x), -(player.z - this.root.position.z)) : this.baseYaw;
