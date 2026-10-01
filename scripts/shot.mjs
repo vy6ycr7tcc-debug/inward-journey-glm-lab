@@ -23,7 +23,8 @@ page.on("pageerror", (e) => errors.push(`[pageerror] ${String(e).slice(0, 240)}`
 
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 // Wall-clock polling (not rAF): the boot can stall the main thread in long GPU tasks, which
-// starves rAF-based polling and made e.g. ?shot=pyramid report a false timeout.
+// starves rAF-based polling and made e.g. ?shot=pyramid report a false timeout. (Same fix
+// as glm-item-6-egypt-door; identical change, so the branches merge cleanly either order.)
 let ready = false;
 for (let i = 0; i < 120 && !ready; i++) {
   await page.waitForTimeout(1000);
