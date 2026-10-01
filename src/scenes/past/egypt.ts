@@ -47,11 +47,73 @@ const smooth = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
+/** Four crisp faces, base at 0, apex up: non-indexed, so each face keeps its own flat
+    normal and the arris lines read as cut, not cast. */
+function pyramidFaces(half: number, ht: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  for (let i = 0; i < 4; i++) {
+    const [ax, az] = c[i], [bx, bz] = c[(i + 1) % 4];
+    pos.push(ax * half, 0, az * half, 0, ht, 0, bx * half, 0, bz * half);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** The pyramid's casing, drawn in the shader (no texture blocks: those read as wallpaper at
+    this scale): monumental horizontal courses of pale dressed stone, each course and each
+    stone its own tone, tight dark joints shadowed under the course above, the foot soiled
+    and weathered, the apex still dressed pale (the casing the telling keeps). */
+function pyramidCasing(u: { sing: N }, t: N): THREE.MeshStandardNodeMaterial {
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.86, metalness: 0 });
+  const p = roomPos;
+  const n = T.normalWorldGeometry;
+  const along = T.select(abs(n.x).greaterThan(abs(n.z)), p.z, p.x);
+  const cH = 1.9;
+  const row = T.floor(p.y.div(cH));
+  const fv = T.fract(p.y.div(cH));
+  // each course a little different; each stone its own length (per-row bond) and its own tone
+  const hash = (v: N) => T.fract(T.sin(v.mul(12.9898)).mul(43758.5453));
+  const courseTone = hash(row.add(3.1)).mul(0.14).add(0.9);
+  const bL = float(6).add(hash(row.add(11.3)).mul(3.5));
+  const stagger = hash(row.add(7.7)).mul(0.4);
+  const u01 = T.fract(along.div(bL).add(row.mul(0.5)).add(stagger));
+  const stoneId = hash(T.floor(along.div(bL).add(row.mul(0.5)).add(stagger)).add(row.mul(57.3)));
+  const stoneTone = stoneId.mul(0.22).add(0.87);
+  // joints: dark and thin; a shadow under the course above, a lit arris at the stone's foot
+  const eu = T.min(u01, float(1).sub(u01)).mul(bL);
+  const ev = T.min(fv, float(1).sub(fv)).mul(cH);
+  const joint = smoothstep(0.15, 0.045, eu).max(smoothstep(0.1, 0.035, ev));
+  const underShade = smoothstep(0.88, 1.0, fv).mul(0.24);
+  const footLight = smoothstep(0.14, 0.0, fv).mul(0.04);
+  // the stone itself: pale warm limestone, grain and a slow drift of tone, rain streaks
+  const grain = fbmN(p.xz.mul(0.35).add(p.y.mul(0.2))).mul(0.14).add(0.9);
+  const drift = fbmN(p.mul(vec3(0.045, 0.09, 0.045))).mul(0.22).add(0.84);
+  const streak = fbmN(vec3(p.x.mul(2.3), p.y.mul(0.14), p.z.mul(2.3)).add(4.7)).mul(0.12);
+  let c = vec3(0.86, 0.845, 0.78).mul(courseTone).mul(stoneTone).mul(grain).mul(drift).mul(float(1).sub(streak));
+  // the foot of eighty ages: soil and soot gathering downward; the apex still dressed pale
+  const foot = smoothstep(9, 0, p.y).mul(0.55);
+  const dressed = smoothstep(HEIGHT * 0.55, HEIGHT * 0.94, p.y);
+  c = mix(c, c.mul(vec3(1.06, 1.05, 1.02)), dressed);
+  c = c.mul(float(1).sub(foot));
+  c = c.mul(joint.mul(0.55).add(1).sub(underShade).add(footLight));
+  m.colorNode = vec4(c, 1);
+  // the stone sings: rings of light climbing its faces (the telling's own moment, kept)
+  const band = pow(sin(p.y.mul(0.45).sub(t.mul(2.2))).mul(0.5).add(0.5), 16);
+  m.emissiveNode = vec3(1, 0.82, 0.5).mul(band).mul(u.sing).mul(0.5);
+  return m;
+}
+
 export function createEgyptScene(scene: THREE.Scene, narration: Narration, whisper: (t: string, ms?: number) => void): Room {
   return seatedRoom(scene, narration, whisper, {
     id: "past_egypt",
     track: "audio/past/past_egypt.mp3",
-    len: 157.8,
+    // the recording's own measure (ffprobe: 276.096 s): live, f rides the decoded buffer's
+    // duration; still frames ride this constant — they must be the SAME timeline or the stills
+    // lie (they did: everything before this sat on a script-era guess of 157.8)
+    len: 276.1,
     seat: new THREE.Vector3(0, 0, 0),
     heading: 0,
     make: (g, t) => {
@@ -139,19 +201,18 @@ export function createEgyptScene(scene: THREE.Scene, narration: Narration, whisp
 
       /* ---------------- the pyramid, its door facing you ---------------- */
       {
-        const geo = new THREE.ConeGeometry(HALF * Math.SQRT2, HEIGHT, 4, 12);
-        geo.rotateY(Math.PI / 4);
-        geo.translate(PYR.x, HEIGHT / 2, PYR.z);
-        const m = landStone("sandstone_blocks_05", 0, 3.4, [1.12, 1.06, 0.96], { course: 1.3, block: 2.2 });
-        // the stone sings: rings of light climbing its faces
-        const y = roomPos.y;
-        const band = pow(sin(y.mul(0.45).sub(t.mul(2.2))).mul(0.5).add(0.5), 16);
-        m.emissiveNode = vec3(1, 0.82, 0.5).mul(band).mul(u.sing).mul(0.5);
+        // the casing: four crisp faces and shader-drawn masonry (pyramidCasing above) — no
+        // texture blocks, which read as wallpaper at this scale
+        const geo = pyramidFaces(HALF, HEIGHT);
+        geo.translate(PYR.x, 0, PYR.z);
+        const m = pyramidCasing(u, t);
         const mesh = new THREE.Mesh(geo, m);
         mesh.castShadow = mesh.receiveShadow = true;
         g.add(mesh);
         ours.push(geo, m);
-        // the door: jambs and lintel of granite standing at the foot of the face, a stone that rises
+        // the door: a portal of granite with depth — jambs and lintel standing off the face,
+        // the slab filling the portal, its back in shadow, the chamber's own light breathing
+        // faintly in the stone while it is shut (never a dead black box)
         const parts: THREE.BufferGeometry[] = [];
         const dz = PYR.z + HALF + 0.8;
         for (const x of [-2.6, 2.6]) {
@@ -167,13 +228,17 @@ export function createEgyptScene(scene: THREE.Scene, narration: Narration, whisp
         frame.castShadow = true;
         g.add(frame);
         ours.push(frame.geometry, gm);
-        const slab = new THREE.Mesh(stoneBlock(4, 6, 0.8, 7), gm);
-        slab.position.set(0, 3, dz + 0.2);
+        // the slab: darker stone than the frame, and the chamber's own light breathing faintly
+        // within it while it sits shut (never a dead black box)
+        const sm = landStone("sandstone_cracks", 0, 1.6, [0.5, 0.34, 0.32]);
+        sm.emissiveNode = vec3(1, 0.72, 0.38).mul(u.chamber.mul(0.055).add(u.door.mul(0.1)));
+        const slab = new THREE.Mesh(stoneBlock(4, 6, 2.2, 7), sm);
+        slab.position.set(0, 3, dz - 0.1);
         g.add(slab);
-        ours.push(slab.geometry);
+        ours.push(slab.geometry, sm);
         (g.userData as { slab?: THREE.Mesh }).slab = slab;
         const lg = new THREE.PlaneGeometry(3.9, 6);
-        lg.translate(0, 3, dz - 0.3);
+        lg.translate(0, 3, PYR.z + HALF - 1.9); // against the face itself, revealed as the slab rises
         const lm = new THREE.MeshBasicNodeMaterial({ fog: false });
         const c = smoothstep(1, 0, length(uv().sub(vec2(0.5, 0.2)).mul(vec2(1.6, 1)))).mul(0.8).add(0.1);
         lm.colorNode = vec4(vec3(1, 0.72, 0.38).mul(c).mul(u.door.mul(0.95).add(0.03)), 1);

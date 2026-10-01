@@ -37,7 +37,9 @@ export function createAtlantisScene(scene: THREE.Scene, narration: Narration, wh
   return seatedRoom(scene, narration, whisper, {
     id: "past_atlantis",
     track: "audio/past/past_atlantis.mp3",
-    len: 158.9,
+    // the recording's own measure (ffprobe: 278.112 s) — live already rode the decoded buffer;
+    // still frames rode a script-era guess (158.9) and lied. Now they are the same timeline.
+    len: 278.1,
     seat: new THREE.Vector3(0, 0, 0),
     heading: 0,
     make: (g, t) => {
@@ -371,6 +373,82 @@ export function createAtlantisScene(scene: THREE.Scene, narration: Narration, wh
         const arrived = smoothstep(0.95, 1, s).mul(u.seeds);
         const tw = sin(t.mul(float(1.1).add(K.z)).add(K.w.mul(30))).mul(0.2).add(0.8);
         S.material.colorNode = vec4(mix(vec3(1, 0.82, 0.5), vec3(0.8, 1, 0.6), K.y.mul(0.3)).mul(S.round).mul(tw).mul(travelling.mul(0.9).add(arrived.mul(0.8))), 1);
+        g.add(S.cloud.sprite);
+        ours.push(S.material);
+      }
+
+      /* ---------------- the island breaks: the sea comes in, and the bells go down with it ----------------
+         The script's own words: "The island broke. The sea came in. The bells went down with it."
+         Stone bursts outward and falls ballistically; the great crystal shatters; foam races out
+         from the waterline and steam rises where the hot stone meets the sea. All of it gated by
+         the telling's own sink (u.sink), every position a pure function of the clock and the
+         stones' seed — nothing per-frame on the CPU, everything bounded and disposed. */
+      {
+        // the breaking: stone torn from hill, terraces and rings, hurled out and down in the
+        // WORLD (it falls to the sea; it does not ride the island down), each with its own
+        // fuse, gone where it slips beneath the water
+        const n = 2600;
+        const B = pointCloud(n, 0.55);
+        for (let i = 0; i < n; i++) {
+          const a = R() * Math.PI * 2;
+          const rr = 4 + Math.sqrt(R()) * 82; // the hill to the outer ring
+          const y = rr < 14 ? 8 + R() * 8 : rr < 44 ? 2 + R() * 3 : 0.5 + R() * 2.5;
+          B.pos.set([ISLE.x + Math.cos(a) * rr, y, ISLE.z + Math.sin(a) * rr], i * 3);
+          B.k.set([R(), Math.cos(a), Math.sin(a), rr / 86], i * 4);
+        }
+        touch(B.cloud);
+        const K = B.cloud.nodes.aK;
+        // the island is under by the first third of the sink ramp: the stone's whole flight
+        // lives there too
+        const s = T.clamp(u.sink.mul(3.2).sub(K.x.mul(0.9)), 0, 1);
+        const fly = s.mul(float(7).add(K.w.mul(11)));
+        const fall = s.mul(s).mul(50);
+        B.material.positionNode = B.cloud.nodes.position
+          .add(vec3(K.y, float(0), K.z).mul(fly))
+          .add(vec3(0, float(2.5).add(K.w.mul(6)).mul(s).sub(fall), 0));
+        // hot at first (the red in the cracks), stone-coloured after, gone under the sea
+        const ember = mix(vec3(1, 0.42, 0.1), vec3(0.72, 0.76, 0.82), K.x);
+        const yW = B.cloud.nodes.position.y.add(float(2.5).add(K.w.mul(6)).mul(s).sub(fall));
+        B.material.colorNode = vec4(
+          ember.mul(B.round).mul(smoothstep(0, 0.02, u.sink)).mul(smoothstep(SEA_Y - 1.5, SEA_Y + 0.8, yW)).mul(1.1),
+          1,
+        );
+        g.add(B.cloud.sprite);
+        ours.push(B.material);
+        // the great crystal shatters: a burst of white light from the temple's crown
+        const m = 700;
+        const W = pointCloud(m, 0.5);
+        for (let i = 0; i < m; i++) W.k.set([R(), R(), R(), R()], i * 4);
+        touch(W.cloud);
+        const K2 = W.cloud.nodes.aK;
+        const s2 = T.clamp(u.sink.mul(3.6).sub(K2.x.mul(1.4)), 0, 1);
+        const a = K2.y.mul(6.28);
+        const r0 = float(0.5).add(K2.z.mul(2.5));
+        const y2 = float(30).add(K2.w.mul(6).sub(1.5).mul(s2)).sub(s2.mul(s2).mul(50));
+        W.material.positionNode = vec3(ISLE.x, 0, ISLE.z)
+          .add(vec3(cos(a).mul(r0).mul(s2), K2.w.mul(6).sub(1.5).mul(s2).sub(s2.mul(s2).mul(50)), sin(a).mul(r0).mul(s2)));
+        W.material.colorNode = vec4(
+          vec3(0.85, 0.95, 1).mul(W.round).mul(smoothstep(0, 0.015, u.sink)).mul(smoothstep(SEA_Y - 1.5, SEA_Y + 0.8, y2)).mul(1.4),
+          1,
+        );
+        g.add(W.cloud.sprite);
+        ours.push(W.material);
+        // the sea comes in: foam rings racing out from the waterline, steam where stone meets water
+        const q = 2400;
+        const S = pointCloud(q, 1.3);
+        for (let i = 0; i < q; i++) S.k.set([R(), R(), R(), R()], i * 4);
+        touch(S.cloud);
+        const K3 = S.cloud.nodes.aK;
+        const s3 = T.clamp(u.sink.mul(2.6).sub(K3.x.mul(1.2)), 0, 1);
+        const a3 = K3.y.mul(6.28);
+        const kind = T.step(0.45, K3.w); // half foam racing out, half steam climbing
+        const out = float(88).add(s3.mul(float(60).add(K3.z.mul(170))));
+        const foam = vec3(ISLE.x, SEA_Y + 0.4, ISLE.z).add(vec3(cos(a3).mul(out), s3.mul(0.5), sin(a3).mul(out)));
+        const rim = float(64).add(K3.z.mul(40));
+        const steam = vec3(ISLE.x, SEA_Y + 2, ISLE.z).add(vec3(cos(a3).mul(rim), K3.w.mul(3).add(s3.mul(float(5).add(K3.y.mul(9)))), sin(a3).mul(rim)));
+        S.material.positionNode = mix(foam, steam, kind);
+        const live = smoothstep(0, 0.03, u.sink).mul(float(1).sub(smoothstep(0.8, 1, s3)));
+        S.material.colorNode = vec4(mix(vec3(0.75, 0.85, 0.95), vec3(0.9, 0.82, 0.7), kind).mul(S.round).mul(live).mul(0.55), 1);
         g.add(S.cloud.sprite);
         ours.push(S.material);
       }
