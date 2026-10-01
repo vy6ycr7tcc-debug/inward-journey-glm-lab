@@ -11,6 +11,10 @@ export function assetUrl(path: string, type = "audio/mpeg"): string {
   return inline ? `data:${type};base64,${inline}` : `./${path}`;
 }
 
+/* Loads asset bytes loud (owner standing directive 8): a warning and one retry with backoff.
+   A missing core model on a flaky mobile network used to be a silent absence — the vanishing
+   animals. */
+const warned = new Set<string>();
 export async function loadBytes(path: string): Promise<ArrayBuffer | null> {
   const inline = (window as AssetWindow).__IJ_ASSETS?.[path];
   if (inline) {
@@ -19,12 +23,21 @@ export async function loadBytes(path: string): Promise<ArrayBuffer | null> {
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out.buffer;
   }
-  try {
-    const r = await fetch(`./${path}`);
-    return r.ok ? await r.arrayBuffer() : null;
-  } catch {
-    return null;
+  let last: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch(`./${path}`);
+      if (r.ok) return await r.arrayBuffer();
+      last = `HTTP ${r.status}`;
+      if (r.status === 404) break; // genuinely not there: say so once, don't knock twice
+    } catch (e) {
+      last = String(e);
+    }
+    if (attempt === 0) await new Promise((res) => setTimeout(res, 900)); // one retry, after a breath
   }
+  console.warn(`[assets] ${path} did not load (${last ?? "unknown"}${warned.has(path) ? ", again" : ""}) — whatever asked for it stands in without it`);
+  warned.add(path);
+  return null;
 }
 
 /** Turn quantized vertex data (16-bit positions, 8-bit normals from KHR_mesh_quantization) into

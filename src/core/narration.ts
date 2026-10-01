@@ -64,12 +64,18 @@ export class Narration {
     private sub: HTMLElement,
   ) {}
 
-  /** Start downloading tracks ahead of need (they are small). */
+  /** Start downloading tracks ahead of need (they are small). The compressed bytes are kept
+      only for the few most recent tracks (owner item 10 P5): a long session once kept every
+      track ever played — 100–300 MB of MP3 that would never be read again. */
+  private rawCap = 8;
   preload(ids: string[]): void {
     for (const id of ids) {
       const t = trackFor(id);
       if (this.raw.has(id) || !t) continue;
-      this.raw.set(id, loadBytes(fileFor(t)));
+      const p = loadBytes(fileFor(t));
+      this.raw.delete(id);
+      this.raw.set(id, p);
+      while (this.raw.size > this.rawCap) this.raw.delete(this.raw.keys().next().value!);
     }
   }
 
@@ -110,9 +116,22 @@ export class Narration {
     return this.pending.has(id);
   }
 
-  /** Whether a track has playable audio (female-voice copies may not exist yet). */
+  /** Whether a track's audio exists — answered without decoding it: an inline-asset check,
+      else a HEAD request. (The old probe fetched and fully decoded a candidate track just to
+      learn it was there — seconds of work and tens of MB to pick the next song.) A file that
+      exists but decodes to nothing still reads as available here; that was true before, too,
+      and the player falls back to subtitles when a buffer comes back empty. */
   async available(id: string): Promise<boolean> {
-    return (await this.buffer(id)) !== null;
+    const t = trackFor(id);
+    if (!t) return false;
+    if (this.decoded.get(id)) return true;
+    const file = fileFor(t);
+    if ((window as { __IJ_ASSETS?: Record<string, string> }).__IJ_ASSETS?.[file]) return true;
+    try {
+      return (await fetch(`./${file}`, { method: "HEAD" })).ok;
+    } catch {
+      return false;
+    }
   }
 
   /** Debug still-frame hook (?shot): when set, time() reads this instead of the audio clock. */
