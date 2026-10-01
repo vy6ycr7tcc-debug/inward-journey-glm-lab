@@ -46,34 +46,41 @@ export interface CueDef {
   label: string;
 }
 
-/** The narration's own marks: timing only, never reworded, never moved. */
+/** The narration's stops, verified against the actual recording (scripts/check-cues.py,
+    scripts/fix-cues.py): the marks as shipped drifted against the file — each was set a
+    little after its part's first word had begun, growing from 0.04 s (IV) to 0.92 s (the
+    landing), so every stop began mid-word and its tail ran into the next stop's opening —
+    the "cut" the owner heard. Each mark now sits in the pause 0.35 s before its part's
+    first word (in the track's own time base, which the game stretches to the file), so no
+    segment begins or ends mid-word, and the landing plays through FINALE_T into the file's
+    own closing silence. Labels and order are the narration's: never reworded, never moved. */
 export const CUES: CueDef[] = [
   { t: 0.0, label: "opening" },
-  { t: 41.84, label: "I — The Magician" },
-  { t: 74.41, label: "II — The High Priestess" },
-  { t: 104.45, label: "III — The Empress" },
-  { t: 129.0, label: "IV — The Emperor" },
-  { t: 151.74, label: "V — The Hierophant" },
-  { t: 175.93, label: "VI — The Lovers" },
-  { t: 205.81, label: "VII — The Chariot" },
-  { t: 232.16, label: "transition: mind → body" },
-  { t: 239.85, label: "VIII — Strength" },
-  { t: 262.93, label: "IX — The Hermit" },
-  { t: 287.05, label: "X — The Wheel of Fortune" },
-  { t: 313.3, label: "XI — Justice" },
-  { t: 337.3, label: "XII — The Hanged Man" },
-  { t: 361.92, label: "XIII — Death" },
-  { t: 385.29, label: "XIV — Temperance" },
-  { t: 411.83, label: "transition: body → spirit" },
-  { t: 418.82, label: "XV — The Devil" },
-  { t: 444.95, label: "XVI — The Tower" },
-  { t: 466.62, label: "XVII — The Star" },
-  { t: 489.2, label: "XVIII — The Moon" },
-  { t: 511.42, label: "XIX — The Sun" },
-  { t: 531.38, label: "XX — Judgement" },
-  { t: 551.68, label: "XXI — The World" },
-  { t: 579.54, label: "XXII — The Fool (The Choice)" },
-  { t: 612.14, label: "landing" },
+  { t: 41.56, label: "I — The Magician" },
+  { t: 74.01, label: "II — The High Priestess" },
+  { t: 103.97, label: "III — The Empress" },
+  { t: 128.44, label: "IV — The Emperor" },
+  { t: 151.12, label: "V — The Hierophant" },
+  { t: 175.28, label: "VI — The Lovers" },
+  { t: 205.0, label: "VII — The Chariot" },
+  { t: 231.27, label: "transition: mind → body" },
+  { t: 238.94, label: "VIII — Strength" },
+  { t: 261.94, label: "IX — The Hermit" },
+  { t: 286.03, label: "X — The Wheel of Fortune" },
+  { t: 312.17, label: "XI — Justice" },
+  { t: 336.08, label: "XII — The Hanged Man" },
+  { t: 360.63, label: "XIII — Death" },
+  { t: 383.89, label: "XIV — Temperance" },
+  { t: 410.36, label: "transition: body → spirit" },
+  { t: 417.32, label: "XV — The Devil" },
+  { t: 443.37, label: "XVI — The Tower" },
+  { t: 464.99, label: "XVII — The Star" },
+  { t: 487.47, label: "XVIII — The Moon" },
+  { t: 509.62, label: "XIX — The Sun" },
+  { t: 529.55, label: "XX — Judgement" },
+  { t: 549.74, label: "XXI — The World" },
+  { t: 577.5, label: "XXII — The Fool (The Choice)" },
+  { t: 610.02, label: "landing" },
 ];
 
 const smooth = (x: number) => {
