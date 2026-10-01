@@ -3014,13 +3014,40 @@ function frame(now: number): void {
     if (S.mode !== "intro") quality.window(stats);
     if (showStats) $("#stats-text").textContent = readings();
   }
-  update(dt);
-  renderer.info.reset();
-  gpuDiagStart();
-  water.renderMirror(renderer, scene, camera);
-  post.render();
-  gpuDiagEnd();
-  frameDraws = renderer.info.render.drawCalls;
+  try {
+    update(dt);
+    renderer.info.reset();
+    gpuDiagStart();
+    water.renderMirror(renderer, scene, camera);
+    post.render();
+    gpuDiagEnd();
+    frameDraws = renderer.info.render.drawCalls;
+  } catch (e) {
+    // The phone took the GPU away mid-frame (the owner's dead black room): the loss callback
+    // only arrives later, and until then every draw throws and nothing renders. Recognize it
+    // here and recover at once — never leave the visitor staring at a dead frame.
+    if (deviceLostFlavor(e)) return recoverFromDeviceLoss(String((e as Error)?.message ?? e));
+    throw e; // a real bug must stay loud
+  }
+}
+
+function deviceLostFlavor(e: unknown): boolean {
+  const s = String((e as Error)?.message ?? e);
+  return /command.?encoder|device lost|GPUDevice|InvalidStateError/i.test(s);
+}
+
+let recovering = false;
+function recoverFromDeviceLoss(why: string): void {
+  if (recovering) return;
+  recovering = true;
+  console.error("device lost mid-frame:", why);
+  showProblem("The light here gave way — taking you back where you were…");
+  persist();
+  // a moment to read the whisper, then a fresh device
+  window.setTimeout(() => {
+    if (document.hidden) addEventListener("visibilitychange", () => location.reload(), { once: true });
+    else location.reload();
+  }, 1400);
 }
 // WebGPU starts asynchronously (it asks the browser for the GPU); the world is built meanwhile.
 bootProgress(0.55, "Waking the light");
@@ -3030,11 +3057,7 @@ renderer
     nameRenderer();
     // if the phone takes the GPU away (memory pressure, a long time in the background), start
     // again where you were instead of freezing on an error
-    renderer.onDeviceLost = () => {
-      persist();
-      if (document.hidden) addEventListener("visibilitychange", () => location.reload(), { once: true });
-      else location.reload();
-    };
+    renderer.onDeviceLost = () => recoverFromDeviceLoss("device.lost callback");
     // Root-cause diagnostic: grab the WebGPU device for per-frame validation error scopes.
     try {
       gpuDiagDevice =
