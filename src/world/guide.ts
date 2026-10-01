@@ -45,6 +45,8 @@ export class Guide {
   private p = new THREE.Vector3();
   private k = 0;
   private arrivedT = -1;
+  private via: THREE.Vector3[] = [];
+  private linger = false;
 
   constructor() {
     this.light = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
@@ -58,17 +60,29 @@ export class Guide {
     this.group.visible = false;
   }
 
-  /** Lead the way to `d`, starting beside the wanderer. */
-  lead(d: Destination, from: THREE.Vector3): void {
+  /** Lead the way to `d`, starting beside the wanderer. `via` are world points to fly
+      through first (a tour's own route, so it never crosses a wall); `linger` keeps it
+      circling the destination once there — a tour's stop — until led on or stopped, and
+      keeps it quiet (the arrival whisper belongs to the free-roam guide alone). */
+  lead(d: Destination, from: THREE.Vector3, opts: { via?: THREE.Vector3[]; linger?: boolean } = {}): void {
     this.target = d;
+    this.via = opts.via ? opts.via.slice() : [];
+    this.linger = opts.linger ?? false;
     this.arrivedT = -1;
-    if (this.k < 0.05) {
+    // a crossing or a far call: it is simply there beside you (a tour's fade did the moving)
+    if (this.k < 0.05 || this.p.distanceTo(from) > 40) {
       this.p.set(from.x + 1.2, from.y + 2, from.z);
       this.hist = [];
     }
   }
   stop(): void {
     this.target = null;
+    this.via = [];
+    this.linger = false;
+  }
+  /** Whether it is on a job (so a place apart keeps updating it while it guides). */
+  get busy(): boolean {
+    return this.target !== null;
   }
   /** How far the destination is, in metres. */
   distance(from: THREE.Vector3): number {
@@ -83,23 +97,28 @@ export class Guide {
     if (!this.group.visible) return;
     const want = new THREE.Vector3();
     if (d) {
-      const dx = d.x - player.x, dz = d.z - player.z, dist = Math.hypot(dx, dz);
-      if (dist < 9 && Math.abs(d.y - player.y) < 12) {
-        // arrived: it circles the place once, then goes
+      // while there are waypoints (a tour's own route), each is the goal in turn
+      const goal = this.via.length ? this.via[0] : { x: d.x, y: d.y, z: d.z };
+      const dx = goal.x - player.x, dz = goal.z - player.z, dist = Math.hypot(dx, dz);
+      const arrived = this.via.length ? dist < 1.6 : dist < 9 && Math.abs(d.y - player.y) < 12;
+      if (arrived && this.via.length) {
+        this.via.shift(); // one leg flown; on to the next, or the destination itself
+      } else if (arrived) {
+        // arrived: it circles the place — marking it — then goes, unless it lingers (a tour's stop)
         if (this.arrivedT < 0) {
           this.arrivedT = t;
-          this.onArrive?.(d);
+          if (!this.linger) this.onArrive?.(d);
         }
         const a = (t - this.arrivedT) * 1.2;
         want.set(d.x + Math.cos(a) * 2.5, d.y + 2.5, d.z + Math.sin(a) * 2.5);
-        if (t - this.arrivedT > 6) this.target = null;
+        if (!this.linger && t - this.arrivedT > 6) this.target = null;
       } else {
         // ahead of you along the way; it waits if you fall behind
         const ahead = Math.min(7, dist);
         const gx = player.x + (dx / dist) * ahead, gz = player.z + (dz / dist) * ahead;
         const ground = Math.max(heightAt(gx, gz), WATER_Y);
         // over land it floats at head height; for places in the air or the deep, it rises or sinks toward them
-        const toward = THREE.MathUtils.clamp(d.y - player.y, -6, 6) * (1 - dist / (dist + 60));
+        const toward = THREE.MathUtils.clamp(goal.y - player.y, -6, 6) * (1 - dist / (dist + 60));
         want.set(gx, Math.max(ground + 1.6, player.y + 1.8 + toward) + Math.sin(t * 1.4) * 0.15, gz);
         if (player.y < WATER_Y - 0.5) want.y = Math.min(want.y, WATER_Y - 0.6);
       }

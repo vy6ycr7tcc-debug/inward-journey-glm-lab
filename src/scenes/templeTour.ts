@@ -19,6 +19,14 @@ export { TEMPLE_ORIGIN };
 export const TRACK_ID = "TEMPLE";
 export const FINALE_T = 636.08;
 
+/** The one companion (item 15): the guide orb itself, commandeered by the tours — it leads
+    along the wanderer's own route, marks the stop by circling it, and waits while the telling
+    plays. One thing, not two. */
+export interface TourGuide {
+  lead(d: { label: string; x: number; y: number; z: number }, from: THREE.Vector3, opts?: { via?: THREE.Vector3[]; linger?: boolean }): void;
+  stop(): void;
+}
+
 export interface TourHooks {
   whisper: (text: string, ms?: number) => void;
   /** The wanderer's body: the tour seats them at the Choice (owner item 5). */
@@ -89,16 +97,12 @@ export const CUES: CueDef[] = [
   { t: 610.02, label: "landing" },
 ];
 
-const smooth = (x: number) => {
-  const t = Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
-  return t * t * (3 - 2 * t);
-};
+
 
 /** The sanctuary's centre and the gateway into it (temple frame). */
 const CENTRE = new THREE.Vector2(0, -44);
 const GATE_Z = -30;
 const ARRIVE_R = 2.4;
-const LIGHT_SPEED = 3.4;
 
 /* ---------------------------------------------------------------- the stops */
 interface Stop {
@@ -190,12 +194,8 @@ export class TempleTour implements SceneModule {
   /** Seconds of quiet since a stop's part finished, before the light glides on. */
   private dwell = 0;
   private lifeT = 0;
-  private path: THREE.Vector2[] = [];
-  private lightAt = new THREE.Vector2();
-  private light: THREE.Sprite;
-  private halo: THREE.Sprite;
-  private lightMat: THREE.SpriteMaterial;
-  private haloMat: THREE.SpriteMaterial;
+  /** The companion (item 15): set by main; when absent the tour still walks itself. */
+  guide: TourGuide | null = null;
   private panel: HTMLDivElement;
   private titleEl: HTMLElement;
   private hintEl: HTMLElement;
@@ -209,46 +209,24 @@ export class TempleTour implements SceneModule {
   private leaveBtn: HTMLButtonElement;
   /** The offered end: the light retires, the wanderer walks to the seat and sits. */
   private offeredT = 0;
-  private lightSink = 0;
   private seat: { x: number; z: number; heading: number } | null = null;
   private seated = false;
   /** A replayed ending is a part like any other: it plays whole, never cut. */
   private replay = false;
   private goal = new THREE.Vector2();
-  private readonly dir = new THREE.Vector2();
   /** The wanderer's own way to the stop (world x, z), walked one point after another. */
   private walk: THREE.Vector2[] = [];
   private view = { dist: 7, pitch: 0.36 };
 
   constructor(
-    scene: THREE.Scene,
+    _scene: THREE.Scene,
     private narration: Narration,
     private player: PlayerLike,
     private follow: FollowLike,
     private hooks: TourHooks,
     private temple: TempleLike,
   ) {
-    // the guiding light: a small bright core in a soft glow, contained
-    const c = document.createElement("canvas");
-    c.width = c.height = 64;
-    const g = c.getContext("2d")!;
-    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grd.addColorStop(0, "rgba(255,246,228,1)");
-    grd.addColorStop(0.2, "rgba(255,214,150,0.55)");
-    grd.addColorStop(1, "rgba(255,190,120,0)");
-    g.fillStyle = grd;
-    g.fillRect(0, 0, 64, 64);
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = () => new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false, opacity: 0 });
-    this.lightMat = mat();
-    this.haloMat = mat();
-    this.light = new THREE.Sprite(this.lightMat);
-    this.light.scale.setScalar(0.55);
-    this.halo = new THREE.Sprite(this.haloMat);
-    this.halo.scale.setScalar(2.2);
-    this.light.visible = this.halo.visible = false;
-    scene.add(this.light, this.halo);
+    // the guiding presence is the guide itself (item 15): main hands it over as `guide`
 
     // the guide's panel: back, where you are going, next; and ✕ to end the tour
     const btn = (text: string, cls: string, label: string) => Object.assign(document.createElement("button"), { type: "button", textContent: text, className: cls, ariaLabel: label });
@@ -303,15 +281,11 @@ export class TempleTour implements SceneModule {
     this.stops = buildStops(this.temple);
     this.lifeT = 0;
     this.offeredT = 0;
-    this.lightSink = 0;
     this.seat = null;
     this.seated = false;
     this.replay = false;
     this.choice.hidden = true;
     this.panel.hidden = false;
-    this.light.visible = this.halo.visible = true;
-    const O = TEMPLE_ORIGIN;
-    this.lightAt.set(this.player.pos.x - O.x, this.player.pos.z - O.z - 3);
     // a still frame (?shot) lands on the stop that time belongs to, already there
     const dt = this.narration.debugTime;
     if (dt !== null && Number.isFinite(dt)) {
@@ -337,7 +311,7 @@ export class TempleTour implements SceneModule {
     if (this.follow.dist !== undefined) this.follow.dist = this.view.dist;
     this.follow.pitch = this.view.pitch;
     if (this.narration.current === TRACK_ID) this.narration.stop(1.5);
-    this.light.visible = this.halo.visible = false;
+    this.guide?.stop(); // the companion is dismissed with the tour
     this.panel.hidden = true;
     this.choice.hidden = true;
     this.rite(-1);
@@ -352,12 +326,21 @@ export class TempleTour implements SceneModule {
     this.phase = "leading";
     const s = this.stops[k], O = TEMPLE_ORIGIN;
     this.goal.set(s.x - O.x, s.z - O.z);
-    this.path = route(this.lightAt, this.waitPoint(s));
     this.temple.setFocus?.(-1);
     // the wanderer's way: the same aisle, from where it stands to the standing place
     const from = new THREE.Vector2(this.player.pos.x - O.x, this.player.pos.z - O.z);
     this.walk = there ? [] : route(from, this.goal).map((p) => new THREE.Vector2(p.x + O.x, p.y + O.z));
     this.player.target = null;
+    // the companion flies that same route ahead of the wanderer, and marks the stop (item 15)
+    if (this.guide) {
+      const wait = this.waitPoint(s);
+      const via = this.walk.slice(0, -1).map((p) => new THREE.Vector3(p.x, this.temple.floorAt(p.x, p.y) + 0.4, p.y));
+      this.guide.lead(
+        { label: s.title, x: O.x + wait.x, y: this.temple.floorAt(O.x + wait.x, O.z + wait.y), z: O.z + wait.y },
+        this.player.pos,
+        { via, linger: true },
+      );
+    }
     if (there || k === 0) this.arrive();
     this.refresh();
   }
@@ -427,33 +410,11 @@ export class TempleTour implements SceneModule {
     if (!this.active) return;
     const step = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.05) : 0;
     this.lifeT += step;
-    const O = TEMPLE_ORIGIN, s = this.stops[this.index];
-    // the light travels its way, slowing into the last metres, then waits, turning slowly
-    let moving = false;
-    if (this.path.length) {
-      const target = this.path[0], d = this.lightAt.distanceTo(target);
-      const v = LIGHT_SPEED * (this.path.length === 1 ? Math.min(1, 0.3 + d / 2.5) : 1) * step;
-      if (d <= v || d < 1e-3) {
-        this.lightAt.copy(target);
-        this.path.shift();
-      } else this.lightAt.addScaledVector(this.dir.subVectors(target, this.lightAt).normalize(), v);
-      moving = true;
-    }
-    const lx = O.x + this.lightAt.x + (moving ? 0 : Math.cos(this.lifeT * 0.7) * 0.35), lz = O.z + this.lightAt.y + (moving ? 0 : Math.sin(this.lifeT * 0.7) * 0.35);
-    if (this.phase === "offered" && !moving) this.lightSink += step * 0.35; // it sinks as it fades
-    const ly = this.temple.floorAt(lx, lz) + 2.2 + Math.sin(this.lifeT * 1.3) * 0.1 - this.lightSink;
-    this.light.position.set(lx, ly, lz);
-    this.halo.position.copy(this.light.position);
-    const fade = smooth(this.lifeT / 1.5);
-    const breathe = 0.8 + 0.2 * Math.sin(this.lifeT * 1.1);
-    // brighter while it leads (it asks to be followed), quiet while a shrine speaks
-    const lead = this.phase === "leading" ? 1 : this.phase === "done" ? 0.8 : 0.45;
-    const retire = this.phase === "offered" ? Math.max(0, 1 - this.offeredT / 3.5) : 1;
-    this.lightMat.opacity = fade * breathe * (0.55 + 0.45 * lead) * retire;
-    this.haloMat.opacity = fade * breathe * 0.18 * lead * retire;
-    if (this.phase === "offered" && retire <= 0) this.light.visible = this.halo.visible = false;
+    const s = this.stops[this.index];
+    // the companion flies itself (the guide's own update); the tour only commands it
 
     // the wanderer walks its way, point after point, and arrives at the standing place
+    const O = TEMPLE_ORIGIN;
     const px = this.player.pos.x - O.x, pz = this.player.pos.z - O.z;
     if (this.phase === "leading") {
       while (this.walk.length && Math.hypot(this.player.pos.x - this.walk[0].x, this.player.pos.z - this.walk[0].y) < 0.7) this.walk.shift();
@@ -539,9 +500,9 @@ export class TempleTour implements SceneModule {
     this.panel.hidden = true;
     this.choice.hidden = false;
     this.rite(-1);
-    // the room clears: the light's work is done — it sinks into the floor and is gone
+    // the room clears: the companion's work is done — it is on its way
     this.offeredT = 0;
-    this.lightSink = 0;
+    this.guide?.stop();
     // the pilgrim is walked to the seat at the dais, and sits for the choice
     this.seat = this.temple.choiceSeat?.() ?? null;
     this.seated = false;
@@ -585,11 +546,6 @@ export class TempleTour implements SceneModule {
 
   dispose(): void {
     this.exit();
-    this.light.removeFromParent();
-    this.halo.removeFromParent();
-    this.lightMat.map?.dispose();
-    this.lightMat.dispose();
-    this.haloMat.dispose();
     this.panel.remove();
     this.choice.remove();
   }

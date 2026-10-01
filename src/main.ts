@@ -2001,6 +2001,11 @@ async function walkEnterStop(): Promise<void> {
   walk.t = 0;
   walk.heard = false;
   await j.enter(s.stage);
+  // the companion flies to the room's seat and marks it until the walk moves on (item 15)
+  if (walk) {
+    const seat = j.seatAt();
+    if (seat) guide.lead({ label: walk.label, x: seat.x, y: player.pos.y, z: seat.z }, player.pos, { linger: true });
+  }
 }
 function walkSkip(): void {
   if (!walk || walk.phase === "enter") return;
@@ -2016,6 +2021,7 @@ function walkEnd(done: boolean): void {
   if (!walk) return;
   const w = walk;
   walk = null;
+  guide.stop(); // the companion is dismissed with the walk (item 15)
   player.target = null;
   document.body.classList.remove("touring");
   walkPanel.hidden = true;
@@ -2849,6 +2855,8 @@ addEventListener("pagehide", persist);
 const tourScenes: TourScenes = initTourScenes({
   scene, narration, player, follow, wanderer, camera, whisper, temple, crossTemple, heightAt, sitting,
 });
+// item 15: one companion for every tour — the guide orb itself leads the temple tour
+tourScenes.tour.guide = guide;
 // Lesson scenes are created above, AFTER the startup additiveKeepsAlpha pass (line ~263),
 // so their additive materials were never converted. Re-run to cover them: without this,
 // additive glow punches dark squares into the lakes' reflection texture.
@@ -2982,7 +2990,7 @@ function update(dt: number): void {
   if (world) seaLife.update(wt, dt, player.pos, inWater, orbAt, camera.position, (innerHeight * dpr) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)));
   if (world) fauna.update(wt, dt, player.pos, inWater, orbAt, S.reduced);
   deepFrame(dt, wt, inWater);
-  if (world) guide.update(wt, dt, player.pos);
+  if (world || guide.busy) guide.update(wt, dt, player.pos); // it guides in the places apart too (item 15)
   presences.speaking = tp.playing ? 1 : 0;
   if (world) presences.update(wt, dt, player.pos, follow.yaw, follow.underwater);
   if (player.swimming && !wasSwimming) seaLife.bubbles(player.pos, 18); // into the water
