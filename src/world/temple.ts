@@ -885,6 +885,13 @@ export class Temple {
     return { x: TEMPLE_ORIGIN.x + CENTRE.x, z: TEMPLE_ORIGIN.z + CENTRE.z + 2.55, heading: 0 };
   }
 
+  /** Where the archetype of shrine `i` stands (world), the tour camera's subject (item 14). */
+  focusFor(i: number): THREE.Vector3 | null {
+    const s = this.shrines[i];
+    if (!s) return null;
+    return s.pivot.position.clone().add(TEMPLE_ORIGIN).add(new THREE.Vector3(0, 2.2, 0));
+  }
+
   shrineInfo(i: number): { numeral: string; name: string; tint: THREE.Color } {
     const s = this.shrines[i];
     return { numeral: s.numeral, name: s.name, tint: new THREE.Color(...s.beings.list[0].spec.tint) };

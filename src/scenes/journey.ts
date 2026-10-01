@@ -161,6 +161,11 @@ export class Journey {
     if (!this.inside || !s?.focus) return [];
     return s.focus.map(([x, y, z]) => new THREE.Vector3(JOURNEY_ORIGIN.x + x, this.floorAt(JOURNEY_ORIGIN.x + x, JOURNEY_ORIGIN.z + z) + y, JOURNEY_ORIGIN.z + z));
   }
+  /** Keep a camera point (journey-local x, z) inside the current room (item 14). */
+  confineCamera(l: { x: number; z: number }): void {
+    this.stage?.confine(l);
+  }
+
   /** The room's gravity point (world), or null. */
   centre(): THREE.Vector3 | null {
     const s = this.stage;

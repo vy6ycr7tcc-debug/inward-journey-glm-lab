@@ -33,6 +33,10 @@ export class FollowCamera {
       toward it (the wanderer in the foreground, the animation ahead); `frameHold` says how
       firmly (lower while a finger is on the screen, so it never fights the hand). */
   frame: THREE.Vector3 | null = null;
+  /** Where the camera may stand (item 14): a place's own interior — a hall, a sanctuary —
+      answers with the point pulled inside, so on a tour path a wall never comes between the
+      camera and the character. Null: the open world needs nothing. */
+  confine: ((p: THREE.Vector3) => THREE.Vector3) | null = null;
   frameHold = 1;
   private frameK = 0;
   private frameAt = new THREE.Vector3();
@@ -94,6 +98,9 @@ export class FollowCamera {
     // under the water, stay under it (no bobbing through the surface)
     if (this.underwater) followPos.y = Math.min(followPos.y, WATER_Y - 0.3);
     if (followPos.y < floor) followPos.y = floor;
+    // and where a place has walls, the camera keeps inside them: pulled in along its own line
+    // to the wanderer, the character always in view (item 14)
+    if (this.confine) followPos.copy(this.confine(followPos));
 
     // The intro: low over the shallows, drifting slowly, looking out toward the far island.
     const drift = reduced ? 0 : t;
