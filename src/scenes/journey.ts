@@ -229,7 +229,7 @@ export class Journey {
     return new THREE.Vector3(x, this.floorAt(x, z), z);
   }
 
-  private async go(to: number | "out", dark: number, at?: Spot): Promise<void> {
+  private async go(to: number | "out", dark: number, at?: Spot, recovering = false): Promise<void> {
     if (this.crossing) return;
     this.crossing = true;
     const h = this.host;
@@ -246,14 +246,34 @@ export class Journey {
       if (!this.inside) this.hideWorld();
       try {
         await this.build(to, at);
+        // the room that stood before stood again — but that does not clear the room that
+        // refused: only a room the visitor walked into on purpose does
+        if (!recovering) this.lastFailed = -1;
       } catch (e) {
+        // A room that will not build must never leave the visitor staring at a frozen black
+        // frame with dead doors (the owner: skip is never a dead end). Say so plainly, then
+        // step back the way we came — a room that stood before — or out; a room that refuses
+        // twice running walks you out, so a broken monument can never trap anyone inside it.
         console.error(e);
+        const again = this.lastFailed === to;
+        this.lastFailed = to;
+        h.whisper("This room would not open. The way back stays open.", 5600);
+        const back = again || this.at < 0 ? "out" : this.at;
+        await wait(dark * 1000);
+        h.fade(false);
+        window.setTimeout(() => {
+          this.crossing = false;
+          void this.go(back, 0.8, undefined, true);
+        }, 500);
+        return;
       }
     }
     await wait(dark * 1000);
     h.fade(false);
     window.setTimeout(() => (this.crossing = false), 250);
   }
+  /** The stage that last refused to build (so a twice-refusing room walks you out). */
+  private lastFailed = -1;
 
   private hideWorld(): void {
     const h = this.host;
@@ -360,18 +380,20 @@ export class Journey {
   }
 
   /** Each frame, after the world's moods: the room lives, keeps you within it, and its doors
-      take you on. Returns false outside. */
+      take you on. Returns false outside. The doors answer even while a room failed to build —
+      the visitor is never stuck in a void with dead controls. */
   update(dt: number, pos: THREE.Vector3): boolean {
     if (!this.inside) return false;
     const r = this.room, s = this.stage;
-    if (!r || !s) return true;
-    r.update(dt);
-    this.host.presence?.(r.presence ? r.presence() : 1);
-    // rooms without air of their own keep this one (the others set theirs in their update)
-    if (this.airNow) applyAir(this.airNow);
-    if (this.crossing) return true;
     const l = this.local.copy(pos).sub(JOURNEY_ORIGIN);
-    if (s.seated && r.seatPos) this.seat(r, l);
+    if (r) {
+      r.update(dt);
+      this.host.presence?.(r.presence ? r.presence() : 1);
+      // rooms without air of their own keep this one (the others set theirs in their update)
+      if (this.airNow) applyAir(this.airNow);
+      if (s?.seated && r.seatPos) this.seat(r, l);
+    }
+    if (!s || this.crossing) return true;
     s.confine(l);
     pos.x = JOURNEY_ORIGIN.x + l.x;
     pos.z = JOURNEY_ORIGIN.z + l.z;
