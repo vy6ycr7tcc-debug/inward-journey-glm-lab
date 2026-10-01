@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+# The game (main) is published at the site's root. The last game before the WebGPU port
+# ("Phase 0") stays beside it at /classic/, for comparison on the phone. If that older build
+# ever fails, the game still deploys.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build /classic/ (the game before WebGPU)
+        continue-on-error: true
+        run: |
+          git fetch --no-tags --depth=1 origin a57c46ff723fa2918d73f01c445de5902f71b779
+          git worktree add ../classic-src a57c46ff723fa2918d73f01c445de5902f71b779
+          cd ../classic-src
+          npm ci
+          npm run build
+          cp -r dist "$GITHUB_WORKSPACE/dist/classic"
+      - name: Write version.json for the TV app
+        run: |
+          printf '{"sha":"%s","built_at":"%s"}\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/version.json
+      - name: Package game.zip for the TV app
+        run: |
+          cd dist
+          zip -qr /tmp/game.zip . -x 'classic/*'
+          mv /tmp/game.zip ./game.zip
+          ls -la game.zip version.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

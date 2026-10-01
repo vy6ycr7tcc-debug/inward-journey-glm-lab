@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0a1c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>The Inward Journey</title>
+<meta name="description" content="A contemplative world of night and light to wander: the archetypes of Mind, Body and Spirit.">
+<meta name="apple-mobile-web-app-title" content="Inward Journey">
+<link rel="icon" type="image/png" href="./favicon.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<!-- the link when shared (absolute URLs, as messengers require) -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="The Inward Journey">
+<meta property="og:description" content="A contemplative world of night and light to wander: the archetypes of Mind, Body and Spirit.">
+<meta property="og:url" content="https://vy6ycr7tcc-debug.github.io/Animation/">
+<meta property="og:image" content="https://vy6ycr7tcc-debug.github.io/Animation/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A seed of golden light over night water: The Inward Journey">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://vy6ycr7tcc-debug.github.io/Animation/og.jpg">
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body class="loading">
+<!-- While the world is built and its shaders compile: a seed of light turning in the dark, and
+     how far the loading has come. Then the title over the water (main.ts). -->
+<div id="loading" role="status" aria-live="polite" aria-label="Preparing the world">
+  <div class="seed-wrap"><div class="boot-ring" aria-hidden="true"></div>
+  <svg class="seed" viewBox="-64 -64 128 128" aria-hidden="true">
+    <g class="turn">
+      <circle class="ring" r="44" pathLength="100"/>
+      <polygon class="hex" points="0,-44 38.1,-22 38.1,22 0,44 -38.1,22 -38.1,-22" pathLength="100"/>
+      <circle class="petal" style="--i:0" r="22" pathLength="100"/>
+      <circle class="petal" style="--i:1" r="22" cx="0" cy="-22" pathLength="100"/>
+      <circle class="petal" style="--i:2" r="22" cx="19.05" cy="-11" pathLength="100"/>
+      <circle class="petal" style="--i:3" r="22" cx="19.05" cy="11" pathLength="100"/>
+      <circle class="petal" style="--i:4" r="22" cx="0" cy="22" pathLength="100"/>
+      <circle class="petal" style="--i:5" r="22" cx="-19.05" cy="11" pathLength="100"/>
+      <circle class="petal" style="--i:6" r="22" cx="-19.05" cy="-11" pathLength="100"/>
+    </g>
+    <circle class="heart" r="3"/>
+  </svg></div>
+  <div id="boot-progress" aria-hidden="true"><div id="boot-bar"><i></i></div><p id="boot-pct">Loading</p></div>
+</div>
+<canvas id="gl" aria-hidden="true"></canvas>
+<div id="surface" aria-hidden="true"></div>
+
+<div id="title" aria-hidden="true">
+  <h1><small>The</small> Inward Journey</h1>
+  <p id="touch">Touch the water to begin</p>
+</div>
+<button id="begin" type="button" aria-label="Touch the water to begin"></button>
+
+<div id="map" role="dialog" aria-labelledby="map-title" hidden>
+  <p id="map-title">Where will you begin?</p>
+  <button id="map-continue" type="button" hidden>Continue where you were</button>
+  <div id="map-frame">
+    <canvas id="map-canvas" aria-label="Map of the world. Drag to move, pinch to zoom, tap a place to choose it."></canvas>
+    <div id="map-zoom">
+      <button id="map-out" type="button" aria-label="See more of the map">−</button>
+      <button id="map-all" type="button" aria-label="See the whole world">All</button>
+      <button id="map-in" type="button" aria-label="Come closer">+</button>
+    </div>
+  </div>
+  <div id="map-pick" hidden aria-live="polite"><p id="map-pick-name"></p><button id="map-go" type="button">Wake here</button></div>
+  <div id="map-places"></div>
+  <p class="note">Drag to move, pinch to come closer. Tap a place, or anywhere on the land, to go there.</p>
+  <button id="map-guide" type="button" hidden>Ask the guide</button>
+  <button id="map-close" type="button" hidden>Stay where I am</button>
+</div>
+
+<div id="guide" role="dialog" aria-labelledby="guide-title" hidden>
+  <div id="guide-head"><p id="guide-title">Where would you like to go?</p><button id="guide-close" type="button" aria-label="Close">×</button></div>
+  <div id="guide-list"></div>
+  <div id="guide-pick" hidden>
+    <p id="guide-name"></p>
+    <div class="row"><button id="guide-walk" type="button">Walk with the guide</button><button id="guide-go" type="button">Take me there</button></div>
+  </div>
+</div>
+
+<button id="sit-offer" type="button" hidden></button>
+<button id="cards-offer" type="button" hidden>The cards</button>
+<div id="shrine" role="dialog" aria-labelledby="shrine-title" hidden>
+  <p id="shrine-title"></p>
+  <button id="shrine-be" type="button">Be with it</button>
+  <div class="row"><button id="shrine-who" type="button">Who are you?</button><button id="shrine-teach" type="button">Its teaching</button><button id="shrine-life" type="button">Its practice</button></div>
+</div>
+<p id="rite-words" aria-live="polite"></p>
+<button id="rite-end" type="button" hidden>Return</button>
+<div id="cards" role="dialog" aria-labelledby="cards-title" hidden>
+  <div id="cards-head">
+    <button id="cards-prev" type="button" aria-label="Previous card">‹</button>
+    <div><p id="cards-title"></p><p id="cards-sub"></p></div>
+    <button id="cards-next" type="button" aria-label="Next card">›</button>
+  </div>
+  <div id="cards-strip"></div>
+  <button id="cards-close" type="button">Leave the cards</button>
+</div>
+<div id="sit-panel" role="dialog" aria-labelledby="sit-title" hidden>
+  <p id="sit-title"></p>
+  <div id="sit-prompts"></div>
+  <div id="heart" hidden>
+    <p class="group" id="heart-label"></p>
+    <div id="heart-track" role="slider" tabindex="0" aria-labelledby="heart-label" aria-valuemin="0" aria-valuemax="4" aria-valuenow="2">
+      <div id="heart-thumb"></div>
+    </div>
+    <div id="heart-ends" aria-hidden="true"><span></span><span></span></div>
+  </div>
+  <div id="sit-actions">
+    <button id="sit-still" type="button">Rest in silence</button>
+    <button id="sit-offer-light" type="button">Offer light</button>
+    <button id="sit-stand" type="button">Stand up</button>
+  </div>
+</div>
+
+<div id="labels" aria-hidden="true"></div>
+
+<div id="tp" role="region" aria-label="Narration player" hidden>
+  <div id="tp-head">
+    <p id="tp-title"></p>
+    <button id="tp-fold" type="button" aria-label="Fold the player away">–</button>
+    <button id="tp-close" type="button" aria-label="Close the narration">×</button>
+  </div>
+  <div id="tp-caption"></div>
+  <div id="tp-row">
+    <button id="tp-pause" type="button">Pause</button>
+    <button id="tp-back" type="button" aria-label="Back fifteen seconds">Back 15 s</button>
+    <button id="tp-next" type="button" aria-label="The next narration">Next</button>
+    <button id="tp-src" type="button">Source</button>
+    <button id="tp-quiet" type="button" aria-pressed="false">Only nature</button>
+  </div>
+</div>
+<div id="tp-mini" role="group" aria-label="Narration" hidden>
+  <svg viewBox="0 0 152 76" aria-hidden="true"><path id="tp-arc-bg" d="M2 0 A74 74 0 0 0 150 0"/><path id="tp-arc" d="M2 0 A74 74 0 0 0 150 0"/></svg>
+  <button id="tp-mini-back" type="button" aria-label="Back fifteen seconds">↺</button>
+  <button id="tp-mini-play" type="button" aria-label="Pause the narration"><span></span></button>
+  <button id="tp-mini-next" type="button" aria-label="The next narration">»</button>
+  <button id="tp-mini-open" type="button" aria-label="Show the narration's details">⌄</button>
+</div>
+<div id="tp-source" role="dialog" aria-labelledby="tp-source-title" hidden>
+  <p id="tp-source-title"></p>
+  <p id="tp-source-kind" class="note"></p>
+  <ul id="tp-source-list"></ul>
+  <div id="tp-source-text"></div>
+  <button id="tp-source-close" type="button">Close</button>
+</div>
+<div id="howto" role="dialog" aria-labelledby="howto-title" hidden>
+  <p id="howto-title">How to play</p>
+  <dl>
+    <dt>The stick, lower left</dt><dd>Put your thumb anywhere low on the left. Push a little to walk, further to run.</dd>
+    <dt>Look</dt><dd>Drag anywhere else to look around. Tap the land and you walk there.</dd>
+    <dt>The round button</dt><dd>Tap to jump. Hold to take off and rise; let go to glide. In flight a tap is a wingbeat. In water it dives and rises.</dd>
+    <dt>The word beside it</dt><dd>What you can do here: Land, Dive, Floor, Surface.</dd>
+    <dt>Hold on something</dt><dd>A tree, a rock, a crystal or the ground: you go and lay your hands on it. Hold on your own heart for the genesis of light.</dd>
+    <dt>Planets, stars, fruit, crystals</dt><dd>Tap one to hear the voice it keeps.</dd>
+    <dt>The half-moon, top right</dt><dd>The narration player: play or pause, back 15 seconds, next. Its card has "Only nature" to rest every voice.</dd>
+    <dt>↺ Hear again</dt><dd>In the monuments' rooms, starts the room's voice from the beginning.</dd>
+    <dt>Contemplation</dt><dd>Be still for about fifteen seconds and you become your own eyes, turned toward whatever moves nearby. Touch anywhere to return.</dd>
+    <dt>Quiet screen</dt><dd>When you don't touch the screen the controls fade away. Any touch brings them back.</dd>
+    <dt>⋮</dt><dd>The map, the guide who walks you to places, autofly, sound and settings.</dd>
+  </dl>
+  <button id="howto-close" type="button">Close</button>
+</div>
+<div id="about" role="dialog" aria-labelledby="about-title" hidden>
+  <p id="about-title">About</p>
+  <p>Some narrations in this world are interpretive adaptations of channeled material from the L/L Research archive, voiced by AI. They are artistic interpretations, not the channeling itself. This is an independent work, not affiliated with or endorsed by L/L Research. The complete archive is freely available at llresearch.org.</p>
+  <p class="note">Made for Samuel. Animation: Universal Animation Library by Quaternius (CC0). Animals: models by mirada from ROME, via three.js. Textures and scanned rocks: Poly Haven (CC0). Ambient occlusion: N8AO (MIT). Built with three.js and postprocessing.</p>
+  <button id="about-close" type="button">Close</button>
+</div>
+
+<p id="whisper" class="whisper" aria-hidden="true"></p>
+<p id="sub" class="whisper" aria-live="polite"></p>
+
+<div id="joy" hidden aria-hidden="true"><div id="knob"></div></div>
+<button id="act" type="button" aria-label="Jump; hold to fly and rise" hidden><span></span></button>
+<button id="ctx" type="button" hidden></button>
+
+<button id="menu-btn" type="button" aria-label="Settings" aria-expanded="false" aria-controls="menu" hidden><span></span></button>
+<div id="menu" role="dialog" aria-label="Settings" hidden>
+  <div class="menu-scroll">
+    <div class="menu-go">
+      <button id="map-open" type="button"><span class="ico" aria-hidden="true">◎</span>Map</button>
+      <button id="guide-open" type="button"><span class="ico" aria-hidden="true">✧</span>Guide</button>
+      <button id="autofly" type="button" aria-pressed="false"><span class="ico" aria-hidden="true">∞</span>Autofly</button>
+    </div>
+    <div class="menu-sec">
+      <label for="vol">Volume</label>
+      <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8">
+      <label class="check"><input id="voice" type="checkbox" checked> Narration</label>
+    </div>
+    <div class="menu-sec">
+      <label class="check"><input id="freefly" type="checkbox"> Free flight: fly where you look</label>
+      <label class="check"><input id="contemplate" type="checkbox" checked> Contemplation when still</label>
+      <label class="check"><input id="awake" type="checkbox" checked> Keep the screen awake</label>
+      <label class="check"><input id="reduced" type="checkbox"> Reduce motion</label>
+    </div>
+    <div class="menu-sec">
+      <button id="offline-btn" type="button" class="menu-row">Download for offline play</button>
+      <div id="offline-progress" hidden>
+        <div id="offline-bar"></div>
+        <p id="offline-text" class="note">0%</p>
+      </div>
+      <button id="howto-open" type="button" class="menu-row">How to play</button>
+      <button id="about-open" type="button" class="menu-row">About</button>
+    </div>
+    <div class="menu-foot">
+      <button id="leave" type="button">Leave</button>
+      <button id="restart" type="button">Begin again</button>
+    </div>
+    <p class="note">Leave keeps your place on this device.</p>
+  </div>
+</div>
+
+<div id="rest" hidden>
+  <p>Your place is kept.</p>
+  <button id="return" type="button">Touch the water to return</button>
+</div>
+
+<!-- a small mark of light while something is on its way (a crossing, a journey, the land arriving) -->
+<button id="hear-again" type="button" hidden aria-label="Hear this room again">↺ Hear again</button>
+<button id="nprog" type="button" hidden aria-label="How much of the narration remains"><span class="bar"><i></i></span><span class="time"></span></button>
+<p id="seat-hint" aria-hidden="true">Sit to listen</p>
+<div id="busy" aria-hidden="true"><svg viewBox="-24 -24 48 48"><circle r="9"/><circle r="9" cx="0" cy="-9"/><circle r="9" cx="7.8" cy="4.5"/><circle r="9" cx="-7.8" cy="4.5"/><circle class="dot" r="1.6"/></svg></div>
+<div id="fade" aria-hidden="true"></div>
+<section id="stats" aria-label="Frame readings" hidden><pre id="stats-text">measuring…</pre></section>
+<div id="live" class="sr" aria-live="polite"></div>
+<script type="module" src="./src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,858 @@
+/* The open world: one analytic height function, so collision, the camera, the grass and the
+   meshes all agree. Water level is y = 0; wherever the land dips below it, there is a lake.
+   - Rolling hills, soft dunes and hollows that hold lakes.
+   - A gentle meadow where the wanderer wakes.
+   - Mountains rising far out, so the world has an edge you see but never reach, and five
+     snow-capped massifs standing within it.
+   The ground is streamed in square chunks around the wanderer. */
+import * as THREE from "three/webgpu";
+import { fogUniforms, T, type N } from "../gpu/tsl";
+import { starDirection } from "./fog";
+import { groundLight } from "./lightfield";
+import { surface } from "./textures";
+
+export const WATER_Y = 0;
+/** The world's radius: mountains rise at its edge, about 4 km out. */
+export const WORLD_R = 4000;
+/** Where the wanderer wakes, and faces. */
+export const SPAWN = { x: 0, z: 0, heading: 0 };
+
+
+/* ---------- noise ---------- */
+function hash(x: number, z: number): number {
+  const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+export function vnoise(x: number, z: number): number {
+  const xi = Math.floor(x), zi = Math.floor(z);
+  const xf = x - xi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
+  const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+export function fbm(x: number, z: number): number {
+  return vnoise(x, z) * 0.5 + vnoise(x * 2.03 + 17, z * 2.03 - 9) * 0.28 + vnoise(x * 4.1 - 5, z * 4.1 + 3) * 0.14 + vnoise(x * 8.3 + 11, z * 8.3 + 7) * 0.08;
+}
+export const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/** Snow-capped mountains standing within the world (Samuel: "mountains with snow"), each a
+    massif of ridges running down from its summit, well away from the archetypes' homes. */
+export const PEAKS: { x: number; z: number; r: number; h: number }[] = [
+  { x: 1650, z: -1550, r: 720, h: 330 },
+  { x: -950, z: 1550, r: 640, h: 260 },
+  { x: 2650, z: 650, r: 700, h: 300 },
+  { x: -2650, z: -1600, r: 760, h: 380 },
+  { x: 350, z: 2250, r: 620, h: 240 },
+];
+function peaks(x: number, z: number): number {
+  let h = 0;
+  for (const p of PEAKS) {
+    const dx = x - p.x, dz = z - p.z;
+    if (Math.abs(dx) > p.r || Math.abs(dz) > p.r) continue;
+    const d = Math.hypot(dx, dz) / p.r;
+    if (d >= 1) continue;
+    // a massif, not a cone: sharp ridges and gullies at three scales (ridged noise, each scale
+    // cut into by the one above), secondary summits, crags, and a steeper upper third
+    const rid = (n: number) => 1 - Math.abs(n * 2 - 1);
+    const r1 = rid(vnoise(x * 0.0045 + p.x * 0.001, z * 0.0045));
+    const r2 = rid(vnoise(x * 0.011 - 7, z * 0.011 + 3));
+    const r3 = rid(vnoise(x * 0.027 + 11, z * 0.027 - 5));
+    const ridged = r1 * r1 * 0.5 + r1 * r2 * r2 * 0.33 + r2 * r3 * 0.17;
+    const ca = dx / (d * p.r + 1e-6), sa = dz / (d * p.r + 1e-6);
+    const spur = 1 - Math.abs(vnoise(ca * 2.6 + p.x * 0.01, sa * 2.6 + d * 5) * 2 - 1);
+    const t = 1 - d;
+    const shape = Math.pow(t, 1.45) * (0.45 + 0.55 * ridged) * (0.8 + 0.3 * spur);
+    h += p.h * shape * 1.15 + (vnoise(x * 0.06, z * 0.06) - 0.5) * 7 * t + (vnoise(x * 0.025, z * 0.025) - 0.5) * 12 * t;
+  }
+  return h;
+}
+
+function rawHeight(x: number, z: number): number {
+  const n1 = fbm(x * 0.0035, z * 0.0035);
+  const n2 = fbm(x * 0.012 + 31, z * 0.012 - 17);
+  const n3 = vnoise(x * 0.07, z * 0.07);
+  let h = (n1 - 0.43) * 40 + (n2 - 0.5) * 9 + (n3 - 0.5) * 0.9;
+  // soft dunes on the higher ground
+  const r = 1 - Math.abs(vnoise(x * 0.018 + 5, z * 0.018 - 3) * 2 - 1);
+  h += r * r * 3.2 * smooth(0.42, 0.62, n1);
+  // the waking meadow: a gentle rise beside the water
+  const ds = Math.hypot(x - SPAWN.x, z - SPAWN.z);
+  h = mix(h, 2.4 + (n2 - 0.5) * 1.6, smooth(70, 18, ds));
+  // broad highlands and lowlands, a kilometre or two across, with great lakes between
+  h += (fbm(x * 0.0005 + 3, z * 0.0005 - 7) - 0.5) * 36 * smooth(60, 250, ds);
+  // mountains far out: the edge of the world; and the snowy massifs within it
+  h += smooth(WORLD_R - 700, WORLD_R + 300, Math.hypot(x, z)) * (60 + n2 * 70);
+  h += peaks(x, z);
+  // deep water: the shallows by the shore stay gentle, and the lakes fall away to real depths
+  if (h < 0) h *= 1 + 1.6 * smooth(0.5, 6, -h);
+  return h;
+}
+
+/** Where each archetype's home should stand, roughly, and on what kind of ground; each
+    settles on the nearest place that suits it.
+    - land: calm, dry, level ground;   high: a height with a view;
+    - shore: level ground at the water's edge;   deep: the floor of deep water;
+    - island: open water, where a small island rises for it. */
+export type SiteKind = "land" | "high" | "shore" | "deep" | "island";
+const WISHED_SITES: { at: [number, number]; kind: SiteKind }[] = [
+  // the Mind, around the shore where the wanderer wakes (a journey on foot, a short flight)
+  { at: [232, -520], kind: "land" }, // I    the beam and ring
+  { at: [-600, -280], kind: "land" }, // II   pillars and veil
+  { at: [-200, 472], kind: "land" }, // III  the spiral garden
+  { at: [680, 220], kind: "land" }, // IV   the throne on its square of light
+  { at: [-480, -940], kind: "land" }, // V    the arch of three stones
+  { at: [480, 820], kind: "land" }, // VI   the crossing rings
+  { at: [900, -380], kind: "land" }, // VII  the chariot, with its road to the horizon
+  // the Body, out to the east
+  { at: [1350, 150], kind: "land" }, // VIII  Strength, the lion at rest
+  { at: [1700, -500], kind: "high" }, // IX   the Hermit, on the heights with his lamp
+  { at: [2050, -50], kind: "land" }, // X    the Wheel
+  { at: [1450, 700], kind: "land" }, // XI   Justice, the scales and the sword
+  { at: [1150, 1300], kind: "shore" }, // XII the Hanged Man, above still water
+  { at: [1850, 950], kind: "land" }, // XIII Death, under the rainbow
+  { at: [2050, 1250], kind: "shore" }, // XIV Temperance, between water and land
+  // the Spirit, out to the west
+  { at: [-1100, 350], kind: "land" }, // XV   the Devil
+  { at: [-1400, -1350], kind: "high" }, // XVI the Tower, on the heights
+  { at: [-1350, 50], kind: "shore" }, // XVII the Star, pouring into the lake
+  { at: [-1900, 250], kind: "deep" }, // XVIII the Moon, in the deep
+  { at: [-1000, -750], kind: "land" }, // XIX the Sun, in a ring of flowers
+  { at: [-1800, -350], kind: "deep" }, // XX  Judgement, rising from the deep
+  { at: [-2050, -1100], kind: "high" }, // XXI the World
+  // the Choice, on a small island in the northern lake
+  { at: [150, -1650], kind: "island" }, // XXII
+];
+function flatAround(x: number, z: number, h: number, r: number, tol: number): boolean {
+  for (const [dx, dz] of [[r, 0], [-r, 0], [0, r], [0, -r]]) if (Math.abs(rawHeight(x + dx, z + dz) - h) > tol) return false;
+  return true;
+}
+function suits(kind: SiteKind, x: number, z: number): boolean {
+  const h = rawHeight(x, z);
+  switch (kind) {
+    case "land":
+      return h >= 2 && h <= 14 && flatAround(x, z, h, 8, 2.2);
+    case "high":
+      return h >= 18 && h <= 70 && flatAround(x, z, h, 8, 3);
+    case "shore": {
+      if (h < 1.5 || h > 4 || !flatAround(x, z, h, 6, 1.8)) return false;
+      for (let a = 0; a < 6.28; a += 0.5) if (rawHeight(x + Math.cos(a) * 16, z + Math.sin(a) * 16) < -1) return true;
+      return false;
+    }
+    case "deep":
+      return h < -16 && flatAround(x, z, h, 9, 3.5);
+    case "island": {
+      if (h > -8) return false;
+      for (let a = 0; a < 6.28; a += 0.785) if (rawHeight(x + Math.cos(a) * 40, z + Math.sin(a) * 40) > -3) return false;
+      return true;
+    }
+  }
+}
+function settle({ at: [x, z], kind }: { at: [number, number]; kind: SiteKind }): [number, number] {
+  // the Mind's homes keep their places; the others may look further for the ground they need
+  const reach = kind === "land" && Math.hypot(x, z) < 1200 ? 140 : 520;
+  const step = reach > 140 ? 10 : 7;
+  for (let r = 0; r <= reach; r += step) {
+    const steps = r === 0 ? 1 : reach === 140 ? 16 : Math.max(16, Math.round((r * Math.PI * 2) / 25));
+    for (let k = 0; k < steps; k++) {
+      const a = (k / steps) * Math.PI * 2;
+      const px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+      if (suits(kind, px, pz)) return [px, pz];
+    }
+  }
+  return [x, z];
+}
+/** Where the landmarks stand, and on what. Positions are shared with stations.ts. */
+export const LANDMARK_SITES: [number, number][] = WISHED_SITES.map(settle);
+export const LANDMARK_KINDS: SiteKind[] = WISHED_SITES.map((w) => w.kind);
+
+// each home's ground is levelled: dry homes a little above the water, deep ones on the floor,
+// and the island raised out of the lake
+/** The pyramid (world/pyramid.ts), after the Great Pyramid as Ra describes it: its proportions
+    (faces at 51.84°, an apex angle near 76° 18′, Ra 56.4), one side parallel to north (58.8,
+    north here is −z), on broad level ground 380–900 m from the shore, away from the homes. */
+export const PYRAMID = (() => {
+  const HALF = 55, HEIGHT = 70;
+  const GA = Math.PI * (3 - Math.sqrt(5));
+  let best: { x: number; z: number; h: number } | null = null, bestScore = Infinity;
+  for (let i = 0; i < 400; i++) {
+    const r = 380 + ((i * 0.618034) % 1) * 520, a = i * GA + 1.1;
+    const x = SPAWN.x + Math.cos(a) * r, z = SPAWN.z + Math.sin(a) * r;
+    const h = rawHeight(x, z);
+    if (h < 3 || h > 18) continue;
+    if (LANDMARK_SITES.some(([lx, lz]) => Math.hypot(x - lx, z - lz) < 170)) continue;
+    let dev = 0;
+    for (let k = 0; k < 12; k++) {
+      const b = (k / 12) * Math.PI * 2;
+      for (const rr of [40, 75]) dev = Math.max(dev, Math.abs(rawHeight(x + Math.cos(b) * rr, z + Math.sin(b) * rr) - h));
+    }
+    if (dev < bestScore) {
+      bestScore = dev;
+      best = { x, z, h };
+    }
+  }
+  const b = best ?? { x: 520, z: 260, h: 6 };
+  return { x: b.x, z: b.z, y: Math.max(2.5, b.h), half: HALF, height: HEIGHT };
+})();
+/** Where the vision of creation stands (world/vision.ts): near the shore, in the middle of
+    things, on dry level ground you see soon after waking. */
+export const MONUMENT = (() => {
+  let best = { x: SPAWN.x + 70, z: SPAWN.z - 40, h: 3 }, bestScore = -Infinity;
+  for (let r = 55; r <= 150; r += 8)
+    for (let k = 0; k < 36; k++) {
+      const a = (k / 36) * Math.PI * 2, x = SPAWN.x + Math.sin(a) * r, z = SPAWN.z + Math.cos(a) * r;
+      const h = rawHeight(x, z);
+      if (h < 1.6 || h > 14) continue;
+      if (LANDMARK_SITES.some(([lx, lz]) => Math.hypot(x - lx, z - lz) < 45)) continue;
+      if (Math.hypot(x - PYRAMID.x, z - PYRAMID.z) < PYRAMID.half * 2.5) continue;
+      let rough = 0;
+      for (let j = 0; j < 8; j++) {
+        const b = (j / 8) * Math.PI * 2;
+        rough = Math.max(rough, Math.abs(rawHeight(x + Math.cos(b) * 14, z + Math.sin(b) * 14) - h));
+      }
+      const score = -rough * 3 - r * 0.02;
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x, z, h };
+      }
+    }
+  return { x: best.x, z: best.z, y: Math.max(1.8, best.h), r: 12 };
+})();
+
+/** The great monuments' grounds (the densities, the adept, past choices, the visions): each on
+    broad dry level ground `r0`–`r1` m from the shore, looked for first toward `bearing`
+    (radians, x = sin, z = cos), clear of the homes, the pyramid, the vision and one another. */
+export interface MonumentSite { x: number; z: number; y: number; r: number; face: number }
+const MONUMENT_SITES: MonumentSite[] = [];
+export function monumentSite(bearing: number, r0: number, r1: number, flat: number): MonumentSite {
+  let best = { x: SPAWN.x + Math.sin(bearing) * r0, z: SPAWN.z + Math.cos(bearing) * r0, h: 4 }, bestScore = -Infinity;
+  for (let r = r0; r <= r1; r += 16)
+    for (let k = -8; k <= 8; k++) {
+      const a = bearing + k * 0.16, x = SPAWN.x + Math.sin(a) * r, z = SPAWN.z + Math.cos(a) * r;
+      const h = rawHeight(x, z);
+      if (h < 2.5 || h > 20) continue;
+      if (LANDMARK_SITES.some(([lx, lz]) => Math.hypot(x - lx, z - lz) < flat + 60)) continue;
+      if (Math.hypot(x - PYRAMID.x, z - PYRAMID.z) < PYRAMID.half * 2 + flat) continue;
+      if (Math.hypot(x - MONUMENT.x, z - MONUMENT.z) < flat + 50) continue;
+      if (MONUMENT_SITES.some((m) => Math.hypot(x - m.x, z - m.z) < m.r + flat + 60)) continue;
+      let rough = 0;
+      for (let j = 0; j < 10; j++) {
+        const b = (j / 10) * Math.PI * 2;
+        for (const rr of [flat * 0.5, flat]) rough = Math.max(rough, Math.abs(rawHeight(x + Math.cos(b) * rr, z + Math.sin(b) * rr) - h));
+      }
+      const score = -rough * 2 - Math.abs(k) * 0.6 - (r - r0) * 0.01;
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x, z, h };
+      }
+    }
+  // its door faces home, toward the shore where you wake
+  const site = { x: best.x, z: best.z, y: Math.max(2.5, best.h), r: flat, face: Math.atan2(SPAWN.x - best.x, SPAWN.z - best.z) };
+  MONUMENT_SITES.push(site);
+  PADS.push({ x: site.x, z: site.z, h: site.y, outer: flat * 1.9, inner: flat * 1.2 });
+  KEEP_CLEAR.push({ x: site.x, z: site.z, r: flat * 1.35 });
+  return site;
+}
+
+/** Places the growing things keep clear of (the pyramid's plaza, the vision's ground). */
+export const KEEP_CLEAR: { x: number; z: number; r: number }[] = [
+  { x: PYRAMID.x, z: PYRAMID.z, r: PYRAMID.half * 1.5 },
+  { x: MONUMENT.x, z: MONUMENT.z, r: MONUMENT.r + 4 },
+];
+/** The flower glades (the owner: "spots that are special with them… really well done, not
+    everywhere"): a glade beside each archetype's home, out of its stone ring, and three near the
+    shore where you begin. Only here do flowers grow; elsewhere the land is soil, stone and grass. */
+export const GLADES: { x: number; z: number; r: number }[] = (() => {
+  const out: { x: number; z: number; r: number }[] = [];
+  LANDMARK_SITES.forEach(([x, z], i) => {
+    if (LANDMARK_KINDS[i] === "deep") return;
+    const a = i * 2.39996;
+    out.push({ x: x + Math.cos(a) * 17, z: z + Math.sin(a) * 17, r: 11 });
+  });
+  for (const [dx, dz] of [[26, -18], [-30, -12], [8, -38]]) out.push({ x: SPAWN.x + dx, z: SPAWN.z + dz, r: 13 });
+  return out;
+})();
+/** 0 outside every glade, 1 at a glade's heart. */
+export const gladeAt = (x: number, z: number): number => {
+  let k = 0;
+  for (const g of GLADES) {
+    const d = Math.hypot(x - g.x, z - g.z);
+    if (d < g.r) k = Math.max(k, 1 - d / g.r);
+  }
+  return k;
+};
+
+export const keptClear = (x: number, z: number, pad = 0) => KEEP_CLEAR.some((k) => Math.hypot(x - k.x, z - k.z) < k.r + pad);
+
+const PADS = LANDMARK_SITES.map(([x, z], i) => {
+  const kind = LANDMARK_KINDS[i], raw = rawHeight(x, z);
+  const h = kind === "deep" ? raw : kind === "island" ? 1.6 : Math.max(1.2, raw);
+  const [outer, inner] = kind === "island" ? [26, 12] : kind === "deep" ? [15, 9] : [11, 6.5];
+  return { x, z, h, outer, inner };
+});
+// the pyramid's plaza, levelled
+PADS.push({ x: PYRAMID.x, z: PYRAMID.z, h: PYRAMID.y, outer: PYRAMID.half * 2.1, inner: PYRAMID.half * 1.45 });
+PADS.push({ x: MONUMENT.x, z: MONUMENT.z, h: MONUMENT.y, outer: MONUMENT.r * 2.2, inner: MONUMENT.r * 1.3 });
+/** The monument of the densities (scenes/densities/monument.ts): a round of eight standing stones
+    about a domed hall, on a stepped platform, its door toward the shore. */
+export const DENSITY_HALL = monumentSite(2.3, 200, 520, 30);
+/** The adept's school (scenes/adept/monument.ts): a stepped tower of three terraces crowned
+    with a crystal, a small shrine at each corner, its door toward the shore. */
+export const ADEPT_HALL = monumentSite(-1.9, 220, 560, 34);
+/** The monument of past choices (scenes/past/monument.ts): a round Atlantean temple on an island
+    ringed by water, on a stepped platform, its door toward the shore. */
+export const PAST_HALL = monumentSite(0.9, 240, 620, 30);
+/** Its platform's rise at distance `d` from its centre (walked up; scenes/past/monument.ts). */
+const pastRise = (d: number): number => (d < 12.4 ? 1.3 : d < 22 ? 0.9 : d < 23 ? 0.6 : d < 24 ? 0.3 : 0);
+/** The stepped platform's rise at distance `d` from a monument's centre (three steps of 0.45 m). */
+export const platformRise = (d: number): number => (d < 19.6 ? 1.35 : d < 20.8 ? 0.9 : d < 22 ? 0.45 : 0);
+
+/** Ground height at (x, z). Below WATER_Y means water. */
+/** A place apart, beyond the world's edge (the temple): its own floor. */
+export const floorHook: { fn: ((x: number, z: number) => number) | null } = { fn: null };
+
+export function heightAt(x: number, z: number): number {
+  if (x > 20000 && floorHook.fn) return floorHook.fn(x, z);
+  let h = rawHeight(x, z);
+  for (const p of PADS) {
+    if (Math.abs(x - p.x) > p.outer || Math.abs(z - p.z) > p.outer) continue;
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d < p.outer) h = mix(h, p.h, smooth(p.outer, p.inner, d));
+  }
+  return h;
+}
+
+/** Where the wanderer stands: the ground, or the pyramid's faces (you can climb to its apex). */
+export function standAt(x: number, z: number): number {
+  const h = heightAt(x, z);
+  if (x > 20000) return h;
+  const m = Math.max(Math.abs(x - PYRAMID.x), Math.abs(z - PYRAMID.z));
+  if (m < PYRAMID.half) return Math.max(h, PYRAMID.y + PYRAMID.height * (1 - m / PYRAMID.half));
+  const dm = Math.hypot(x - DENSITY_HALL.x, z - DENSITY_HALL.z);
+  if (dm < 22) return Math.max(h, DENSITY_HALL.y + platformRise(dm));
+  const dp = Math.hypot(x - PAST_HALL.x, z - PAST_HALL.z);
+  return dp < 24 ? Math.max(h, PAST_HALL.y + pastRise(dp)) : h;
+}
+
+/** Caves in the steep hillsides (Samuel: "caves"): where the ground climbs sharply, away from
+    the homes, the shore and each other. `face` is the direction the mouth opens, downhill. */
+export const CAVE_SITES: { x: number; z: number; y: number; face: number }[] = (() => {
+  const out: { x: number; z: number; y: number; face: number }[] = [];
+  const GA = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < 14 && out.length < 7; i++) {
+    const a = i * GA * 2.9 + 0.4, r = 320 + ((i * 0.618) % 1) * 1150;
+    const hx = Math.cos(a) * r, hz = Math.sin(a) * r;
+    search: for (let rr = 0; rr <= 320; rr += 20) {
+      const n = rr === 0 ? 1 : Math.round((rr * 2 * Math.PI) / 30);
+      for (let k = 0; k < n; k++) {
+        const b = (k / n) * Math.PI * 2;
+        const x = hx + Math.cos(b) * rr, z = hz + Math.sin(b) * rr;
+        const h = heightAt(x, z);
+        if (h < 5 || h > 45 || Math.hypot(x - SPAWN.x, z - SPAWN.z) < 150) continue;
+        const gx = heightAt(x + 8, z) - heightAt(x - 8, z), gz = heightAt(x, z + 8) - heightAt(x, z - 8);
+        if (Math.hypot(gx, gz) < 5) continue; // a real slope: the cave runs into the hill
+        if (LANDMARK_SITES.some(([lx, lz]) => Math.hypot(x - lx, z - lz) < 80)) continue;
+        if (out.some((c) => Math.hypot(c.x - x, c.z - z) < 400)) continue;
+        out.push({ x, z, y: h, face: Math.atan2(-gz, -gx) });
+        break search;
+      }
+    }
+  }
+  return out;
+})();
+
+/** Which kind of ground this is, 0–1 each: meadow (for grass and flowers), sand, stone. */
+export function groundKind(x: number, z: number, h = heightAt(x, z)): { meadow: number; sand: number; stone: number } {
+  const sand = smooth(1.2, 0.2, h);
+  const stone = smooth(9, 16, h) * smooth(0.35, 0.65, fbm(x * 0.01 + 50, z * 0.01));
+  const meadow = Math.max(0, 1 - sand - stone) * smooth(0.25, 0.5, fbm(x * 0.02 - 20, z * 0.02 + 40));
+  return { meadow, sand, stone };
+}
+
+/** Circle colliders for solid features (pillars, stones). */
+export interface Collider {
+  x: number;
+  z: number;
+  r: number;
+  top: number;
+}
+export const colliders: Collider[] = [];
+
+/* ---------- streamed ground, in three levels of detail ----------
+   Near the wanderer: fine 64 m tiles (a vertex every 2 m). Around them, out to ~640 m: coarse
+   256 m tiles (every 8 m). Beyond, out to ~2.5 km: broad 1 km tiles (every 32 m), which you see
+   when you fly high above the haze. Where a finer level covers the ground, the coarser level's
+   vertices are sunk out of sight. Normals come from the height function itself, so tiles meet without seams,
+   and hollows are shaded by how much sky they see. */
+interface Level {
+  chunk: number;
+  seg: number;
+  ring: number;
+}
+const LEVELS: Level[] = [
+  { chunk: 64, seg: 32, ring: 2 }, // near: a vertex every 2 m, ±160 m
+  { chunk: 256, seg: 32, ring: 2 }, // far: every 8 m, ±640 m
+  { chunk: 1024, seg: 32, ring: 2 }, // horizon: every 32 m, ±2.5 km (seen from the air)
+];
+
+const C = {
+  wet: new THREE.Color("#35334f"),
+  sand: new THREE.Color("#a79dc0"),
+  meadowA: new THREE.Color("#3f5f73"), // silver-blue
+  meadowB: new THREE.Color("#58497e"), // violet
+  meadowC: new THREE.Color("#6d5268"), // rose
+  stone: new THREE.Color("#4b4563"),
+  snow: new THREE.Color("#bcb9da"),
+  granite: new THREE.Color("#3b3942"), // the mountains' bare rock, dark under the snow
+  snowHigh: new THREE.Color("#e2e4f2"), // the high snowfields, whiter
+  earth: new THREE.Color("#5e4a3c"), // bare, warm earth
+  loam: new THREE.Color("#46382f"),
+};
+
+/** The ground's material: real scanned sand, grass and rock (tinted to the moonlit palette),
+    with glitter in the sand and no drawn lines. */
+/** Shared with the game loop: the time, for the caustics that dance on the floor of the lakes. */
+export const groundUniforms = { uT: T.uniform(0) };
+
+const tmix = T.mix;
+const {
+  abs, attribute, cameraPosition, If, cameraViewMatrix, dFdx, dFdy, dot, exp, float, floor, Fn, fract, length, max, min, normalize, normalView,
+  fwidth, normalWorld, positionWorld, pow, sin, smoothstep, step, texture, vec2, vec3, vec4,
+} = T;
+const gH = (p: N): N => fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453));
+const cH2 = (p: N): N => fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))).mul(43758.5453));
+const gN = Fn(([p]: N[]) => {
+  const i = floor(p), f0 = fract(p), f = f0.mul(f0).mul(float(3).sub(f0.mul(2)));
+  return tmix(tmix(gH(i), gH(i.add(vec2(1, 0))), f.x), tmix(gH(i.add(vec2(0, 1))), gH(i.add(vec2(1, 1))), f.x), f.y);
+});
+/** Caustics: light through the moving surface, gathered into a slowly shifting web of cell edges. */
+const cWeb = Fn(([p, t]: N[]) => {
+  const i = floor(p), f = fract(p);
+  const d1 = float(8).toVar(), d2 = float(8).toVar();
+  for (let y = -1; y <= 1; y++)
+    for (let x = -1; x <= 1; x++) {
+      const g = vec2(x, y);
+      const o = sin(t.add(cH2(i.add(g)).mul(6.2831))).mul(0.42).add(0.5);
+      const d = length(g.add(o).sub(f));
+      d2.assign(min(d2, max(d1, d)));
+      d1.assign(min(d1, d));
+    }
+  return d2.sub(d1);
+});
+
+function groundMaterial(): THREE.MeshStandardNodeMaterial {
+  // matte earth: no sheen of sky or moon sliding over it as the camera moves (Samuel: "you
+  // don't need to be ray tracing the floor")
+  // (the vertex colours are applied in colorNode, so the snow can cover them)
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 1, metalness: 0 });
+  m.envMapIntensity = 0.35;
+  const [sand, meadow, rock, cliff] = [surface("sand"), surface("meadow"), surface("rock"), surface("cliff")];
+  const uT = groundUniforms.uT;
+  const moon = vec3(...starDirection().toArray());
+  // x: sky seen (1 open … darker in hollows), y: how sandy, z: how rocky
+  const gr = attribute("aGround", "vec3");
+  const vGW = positionWorld;
+  const w = vec3(gr.y, gr.z, max(0, float(1).sub(gr.y).sub(gr.z))); // sand, rock, meadow
+  const q = vGW.xz;
+  const camD = length(vGW.sub(cameraPosition));
+  const nW = normalize(normalWorld);
+  // steep ground, and the mountains (their gentle slopes too): rock
+  const mtn = smoothstep(22, 60, vGW.y);
+  const steep = max(smoothstep(0.14, 0.42, float(1).sub(nW.y)), mtn).mul(step(0.5, vGW.y));
+  const sea = smoothstep(-0.6, -3.5, vGW.y);
+  // the scans' detail reaches far (mipmapped, it doesn't shimmer), and cliffs to the mountains
+  const fade = float(1).sub(smoothstep(tmix(float(300), float(1400), steep), tmix(float(1100), float(2400), steep), camD));
+  const CS = 7; // metres a repeat of the cliff scan
+  const L = 0.004; // a layer weighing less than this isn't sampled at all
+
+  /* Power: every texture is read only where it shows. Each layer (sand, rock, meadow, cliff, the
+     lake floor, the fine grit close by) is sampled inside its own branch, so a patch of meadow
+     reads the meadow scans and nothing else (about a quarter of what it used to), and the far
+     land, beyond the scans' reach, reads none. Derivatives are taken before any branch (they
+     must be) and every read inside one is a `grad` read. */
+  const setup = () => {
+    const W = w.toVar(), ST = steep.toVar(), CD = camD.toVar(), SEA = sea.toVar(), FD = fade.toVar();
+    const N_ = nW.toVar();
+    const dqx = dFdx(q).toVar(), dqy = dFdy(q).toVar(), dwx = dFdx(vGW).toVar(), dwy = dFdy(vGW).toVar();
+    // No repeat ever shows (after Inigo Quilez's texture-repetition trick): a slow noise picks, for
+    // each stretch of ground, one of eight offsets of the scan, and neighbouring stretches blend
+    // into each other; both samples share the ground's own derivatives, so no seam shows either.
+    const pick = gN(q.mul(0.045)).mul(8).toVar();
+    const pa = floor(pick);
+    const pf = smoothstep(0.25, 0.75, fract(pick)).toVar();
+    const offA = sin(vec2(3, 7).mul(pa)).toVar(), offB = sin(vec2(3, 7).mul(pa.add(1))).toVar();
+    const samp = (t: THREE.Texture, sc: number) => {
+      const u = q.div(sc), dx = dqx.div(sc), dy = dqy.div(sc);
+      return tmix(texture(t, u.add(offA)).grad(dx, dy), texture(t, u.add(offB)).grad(dx, dy), pf);
+    };
+    // the rock seen from all three sides (the gentle slopes from above): a scan projected only from
+    // the sides stretched into streaks across the mountains' shoulders
+    const bx = pow(abs(N_.x), 4).toVar(), bz = pow(abs(N_.z), 4).toVar(), by = pow(abs(N_.y), 4).toVar();
+    const bsum = max(bx.add(bz).add(by), 1e-4).toVar();
+    const side = (t: THREE.Texture, sc: number, a: "zy" | "xy" | "xz") =>
+      texture(t, vGW[a].div(sc)).grad(dwx[a].div(sc), dwy[a].div(sc));
+    const tri = (t: THREE.Texture, sc: number) =>
+      side(t, sc, "zy").mul(bx).add(side(t, sc, "xy").mul(bz)).add(side(t, sc, "xz").mul(by)).div(bsum);
+    return { W, ST, CD, SEA, FD, samp, tri, side, bx, bz, by, bsum };
+  };
+
+  // Crags: the mountains' faces broken into ridges and gullies in the light (ridged noise at two
+  // scales, its slope turned into the surface's tilt), finer than the land's triangles can carry.
+  // Only on the mountains: x the crag's height (for the crevices), yz the tilt.
+  const cragN = Fn(() => {
+    const out = vec3(0.5, 0, 0).toVar();
+    If(mtn.greaterThan(L), () => {
+      const ridge = (p: N) => float(1).sub(abs(gN(p).mul(2).sub(1)));
+      const crag = (p: N) => ridge(p.mul(0.025)).mul(0.7).add(ridge(p.mul(0.08).add(17)).mul(0.22)).add(gN(p.mul(0.35).add(5)).mul(0.08));
+      const E = 0.7;
+      const c0 = crag(q), cx = crag(q.add(vec2(E, 0))), cz = crag(q.add(vec2(0, E)));
+      out.assign(vec3(c0, c0.sub(cx).mul(mtn.mul(5.5 / E)), c0.sub(cz).mul(mtn.mul(5.5 / E))));
+    });
+    return out;
+  })();
+  const dCrag = vec3(cragN.y, 0, cragN.z);
+  const nP = normalize(nW.add(dCrag));
+  // Snow, decided for every point rather than at the land's corners (which painted soft blobs):
+  // it lies where the ground (crags and all) is gentle enough, above a ragged line, with wind-cut
+  // edges; drifts carry the fine grain of the sand scan
+  const snowLine = gN(q.mul(0.01).add(3)).sub(0.5).mul(60).add(95);
+  const lieN = gN(q.mul(0.09).add(11)).sub(0.5).mul(0.22).add(gN(q.mul(0.6)).sub(0.5).mul(0.08));
+  const snow = smoothstep(snowLine, snowLine.add(12), vGW.y).mul(smoothstep(0.6, 0.7, nP.y.add(lieN))).mul(mtn);
+
+  m.colorNode = Fn(() => {
+    const { W, ST, CD, SEA, FD, samp, tri, side, bx, bz, bsum } = setup();
+    const SN = snow.toVar();
+    const det0 = vec3(0).toVar(), ao0 = float(0).toVar(), grain = float(1).toVar();
+    const withAo = CD.lessThan(260);
+    If(FD.greaterThan(0.001), () => {
+      const flat = float(1).sub(ST);
+      // each scan at two scales, so no repeat reads as a grid across the ground; its occlusion at one
+      const layer = (wt: N, t: { diff: THREE.Texture; arm: THREE.Texture }, sc: number, gain: number) => {
+        If(wt.greaterThan(L), () => {
+          det0.addAssign(samp(t.diff, sc).rgb.mul(0.6).add(samp(t.diff, sc * 2.618).rgb.mul(0.4)).mul(gain).mul(wt).mul(flat));
+          If(withAo, () => {
+            ao0.addAssign(samp(t.arm, sc).r.mul(wt).mul(flat));
+          });
+        });
+      };
+      If(flat.greaterThan(L), () => {
+        layer(W.x, sand, 3, 1.9);
+        layer(W.y, rock, 4, 2.2);
+        layer(W.z, meadow, 2.2, 2.6);
+      });
+      // steep ground is a cliff: the cliff scan wrapped round it (triplanar), near at its own
+      // scale, far much larger so its strata still read from a kilometre away
+      If(ST.greaterThan(L), () => {
+        const farK = smoothstep(120, 600, CD);
+        const cl = tmix(tri(cliff.diff, CS).rgb, tri(cliff.diff, CS * 9).rgb, farK);
+        det0.addAssign(cl.mul(2.3).mul(ST));
+        If(withAo, () => {
+            ao0.addAssign(side(cliff.arm, CS, "zy").r.mul(bx).add(side(cliff.arm, CS, "xy").r.mul(bz)).div(bsum).mul(ST));
+          });
+      });
+      If(SN.greaterThan(L), () => {
+        grain.assign(dot(side(sand.diff, 2.4, "xz").rgb, vec3(0.3, 0.5, 0.2)).mul(0.5).add(0.8));
+      });
+    });
+    // the scans' own occlusion: every pebble, crack and hollow darkens as in the temple's stone
+    const ao = tmix(float(1), tmix(float(0.3), float(1.08), ao0), float(1).sub(smoothstep(40, 260, CD)));
+    // keep the moonlit palette: mostly the scan's light and shade, a little of its colour
+    const det = tmix(vec3(dot(det0, vec3(0.3, 0.5, 0.2))), det0, 0.72).mul(ao);
+    // broad variation over the land, so the far country is never one flat colour
+    const macro = tmix(float(0.86), float(1.1), gN(q.mul(0.0035))).mul(tmix(float(0.93), float(1.05), gN(q.mul(0.021).add(7))));
+    const ground = tmix(vec3(1), det, FD).mul(macro).toVar();
+    // The lake floors (after the drowned tombs of Jedi: Fallen Order's Zeffo): fine grey-green
+    // silt settled over the sand, dark patches of growth, pebbles and shell-grit scattered, and
+    // the deeper, the more of it; a floor you'd want to swim low over, not a plain of sand.
+    If(SEA.greaterThan(L), () => {
+      const siltN = gN(q.mul(0.35)).mul(0.6).add(gN(q.mul(1.3).add(9)).mul(0.4));
+      const silt = tmix(vec3(0.62, 0.66, 0.6), vec3(0.45, 0.5, 0.47), siltN).mul(samp(sand.diff, 1.6).rgb.mul(1.7));
+      const growth = smoothstep(0.58, 0.72, gN(q.mul(0.18).add(31))).mul(smoothstep(0.35, 0.65, gN(q.mul(0.9).add(4))));
+      const pc = floor(q.mul(2.4)), pbf = fract(q.mul(2.4)).sub(0.5);
+      const pebble = step(0.86, gH(pc)).mul(smoothstep(0.26, 0.12, length(pbf.add(vec2(gH(pc.add(3)), gH(pc.add(7))).sub(0.5).mul(0.4)))));
+      const floorC = tmix(tmix(silt, vec3(0.12, 0.2, 0.13), growth.mul(0.8)), vec3(0.78, 0.74, 0.66), pebble.mul(0.7)).mul(ao);
+      ground.assign(tmix(ground, floorC, SEA.mul(float(1).sub(ST.mul(0.6)))));
+    });
+    // the rock darkens into its crevices (the crags' hollows), the snow keeps its white
+    const crev = tmix(float(1), smoothstep(0.15, 0.7, cragN.x).mul(0.5).add(0.62), mtn);
+    const snowC = tmix(vec3(0.5, 0.49, 0.7), vec3(0.76, 0.78, 0.89), smoothstep(150, 230, vGW.y)).mul(grain);
+    return vec4(tmix(ground.mul(T.vertexColor().rgb).mul(crev), snowC, SN).mul(gr.x), 1);
+  })();
+
+  // Sand, as in Journey: ripples the wind combs across it (two wavelengths, bent by slow noise),
+  // tilting its surface so the light catches their crests; each set fades where it grows finer
+  // than the pixels can show (it aliased into a diamond moiré). fwidth before any branch.
+  const WIND = vec2(0.8, 0.6);
+  const ripPh = dot(q, WIND).mul(6.3).add(gN(q.mul(0.25)).mul(7)), ripPh2 = dot(q, vec2(0.6, -0.8)).mul(15).add(gN(q.mul(0.9)).mul(4));
+  const aa = (ph: N) => float(1).sub(smoothstep(0.6, 1.6, fwidth(ph)));
+  const ripK = w.x.mul(float(1).sub(smoothstep(12, 45, camD))).mul(float(1).sub(steep));
+  const dRip = vec3(WIND.x, 0, WIND.y).mul(sin(ripPh).mul(0.13).mul(aa(ripPh))).add(vec3(0.6, 0, -0.8).mul(sin(ripPh2).mul(0.06).mul(aa(ripPh2)))).mul(ripK);
+
+  // the scans' relief: each surface's normal map, blended as the ground is, and only near
+  const dW = Fn(() => {
+    const { W, ST, CD, samp, side, bx, bz, by, bsum } = setup();
+    const SN = snow.toVar();
+    const d = vec3(0).toVar();
+    const nm = (t: THREE.Texture, sc: number) => samp(t, sc).xy.mul(2).sub(1);
+    const flat = float(1).sub(ST);
+    If(CD.lessThan(160).and(flat.greaterThan(L)), () => {
+      const near = float(1).sub(smoothstep(30, 160, CD)).mul(flat).mul(1.8);
+      // and close by, the same scans again at a finer scale: grit under the feet, never a blur
+      const close = float(1).sub(smoothstep(4, 16, CD)).mul(0.55);
+      const layer = (wt: N, t: THREE.Texture, sc: number, gain: number, fine: number) => {
+        If(wt.greaterThan(L), () => {
+          const n = nm(t, sc).mul(gain).toVar();
+          If(CD.lessThan(16), () => {
+            n.addAssign(nm(t, fine).mul(close));
+          });
+          d.addAssign(vec3(n.x, 0, n.y.negate()).mul(wt).mul(near));
+        });
+      };
+      layer(W.x, sand.nor, 3, 0.9, 0.9);
+      layer(W.y, rock.nor, 4, 1.2, 1.1);
+      layer(W.z, meadow.nor, 2.2, 0.8, 0.7);
+    });
+    // on a cliff, each side's normal map turns about its own plane (x-facing: z and y; z-facing: x and y)
+    If(CD.lessThan(400).and(ST.greaterThan(L)), () => {
+      const nX = side(cliff.nor, CS, "zy").xy.mul(2).sub(1), nZ = side(cliff.nor, CS, "xy").xy.mul(2).sub(1), nY = side(cliff.nor, CS, "xz").xy.mul(2).sub(1);
+      const dc = vec3(0, nX.y, nX.x).mul(bx).add(vec3(nZ.x, nZ.y, 0).mul(bz)).add(vec3(nY.x, 0, nY.y.negate()).mul(by)).div(bsum)
+        .mul(float(1).sub(smoothstep(60, 400, CD))).mul(tmix(float(1.6), float(0.5), SN));
+      d.addAssign(dc.mul(ST));
+    });
+    return d;
+  })().add(dRip).add(dCrag);
+  m.normalNode = normalize(normalView.add(cameraViewMatrix.mul(vec4(dW, 0)).xyz));
+
+  m.emissiveNode = Fn(() => {
+    const gv = normalize(cameraPosition.sub(vGW));
+    // glitter: grains of sand that catch the light as you move
+    const gq = vGW.xz.mul(22), cell = floor(gq);
+    const tw = gH(cell.mul(1.7).add(floor(gv.xz.mul(24).add(gv.y.mul(11)))));
+    const dot_ = smoothstep(0.22, 0, length(fract(gq).sub(0.5))); // a point of light, not a fleck
+    const glit = step(0.975, gH(cell)).mul(step(0.6, tw)).mul(dot_).mul(gr.y).mul(float(1).sub(smoothstep(4, 30, camD))).mul(step(0, vGW.y));
+    const e = vec3(1.0, 0.93, 0.82).mul(glit).mul(2.2).toVar();
+    // caustics on the floor of the lakes; the web is warped by slow noise, so no cell is ever regular
+    const dep = vGW.y.negate();
+    const cq0 = vGW.xz.mul(0.32);
+    const cq = cq0.add(vec2(gN(cq0.mul(0.9).add(uT.mul(0.05))), gN(cq0.mul(0.9).sub(uT.mul(0.04)).add(5))).mul(1.4));
+    const web = min(cWeb(cq, uT.mul(0.5)), cWeb(cq.mul(1.37).add(7.3), uT.mul(-0.4)));
+    const cau = pow(float(1).sub(smoothstep(0, 0.32, web)), 2.2).mul(gN(cq.mul(0.35).add(uT.mul(0.03))).mul(0.45).add(0.55));
+    const k = exp(dep.mul(-0.08)).mul(smoothstep(0.3, 1.5, dep)).mul(float(1).sub(smoothstep(12, 40, camD)));
+    // (left out: Samuel found the moving web on the floor "annoying", like a reflection)
+    void cau, k;
+    // a soft sheen where the ground faces away toward the moon (light through the haze)
+    // the lights of the world, pooling on the ground (lanterns, beings, crystals, your own)
+    e.addAssign(groundLight(vGW).mul(T.vertexColor().rgb.mul(1.6).add(0.12)).mul(gr.x));
+    // Journey's sand: a liquid sheen toward the low sun or the moon, off the rippled surface (soft,
+    // broad and faint: never a glare sliding over the ground), and a pale rim at grazing angles
+    const nS = normalize(nW.add(dRip.mul(1.2)));
+    const sheen = pow(max(dot(T.reflect(gv.negate(), nS), fogUniforms.glowDir), 0), 24).mul(0.16);
+    const rim = pow(float(1).sub(max(dot(nS, gv), 0)), 5).mul(0.05);
+    e.addAssign(fogUniforms.glow.mul(sheen.add(rim)).mul(gr.y).mul(float(1).sub(steep)).mul(float(1).sub(smoothstep(60, 220, camD))));
+    const back = pow(max(dot(gv.negate(), moon), 0), 3);
+    e.addAssign(vec3(0.32, 0.26, 0.24).mul(back).mul(gr.y.mul(0.7).add(0.3)).mul(0.18));
+    return e;
+  })();
+  void abs;
+  return m;
+}
+
+export class Terrain {
+  group = new THREE.Group();
+  private tiles = LEVELS.map(() => new Map<string, THREE.Mesh>());
+  private pools = LEVELS.map(() => [] as THREE.Mesh[]);
+  private centre = LEVELS.map(() => [Infinity, Infinity]);
+  private material = groundMaterial();
+  private col = new THREE.Color();
+  private tmp = new THREE.Color();
+
+  /** Keep the wanderer in the middle of every level. `force` builds everything now.
+      Each level's ground sinks out of sight only where the finer level's tiles already stand,
+      and a tile left behind goes only after the coarser ground under it has risen again: done
+      the other way round, flying fast left holes with straight edges, splits across the land. */
+  update(x: number, z: number, force = false): void {
+    LEVELS.forEach((L, li) => {
+      const cx = Math.floor(x / L.chunk), cz = Math.floor(z / L.chunk);
+      if (!force && cx === this.centre[li][0] && cz === this.centre[li][1]) return;
+      this.centre[li] = [cx, cz];
+      for (let i = -L.ring; i <= L.ring; i++)
+        for (let j = -L.ring; j <= L.ring; j++) {
+          const k = `${cx + i},${cz + j}`;
+          if (!this.tiles[li].has(k)) this.push(li, k, false);
+        }
+      for (const k of this.tiles[li].keys()) if (!this.wanted(li, k)) this.retire(li, k);
+    });
+    if (force) {
+      while (this.queue.length) this.runNext();
+      return;
+    }
+    // about a tile a frame (~10 ms of work each on a phone), so walking never stutters; while
+    // much is waiting (flying fast), a little more
+    const t0 = performance.now(), budget = this.queue.length > 12 ? 7 : 3;
+    let built = 0;
+    while (this.queue.length && (built === 0 || performance.now() - t0 < budget)) if (this.runNext()) built++;
+  }
+
+  private queue: { li: number; k: string }[] = [];
+  /** Tiles still to build (for the loading mark). */
+  get pending(): number {
+    return this.queue.length;
+  }
+  private queued = new Set<string>();
+
+  /** Queue building (or rebuilding) a tile; `last` moves it behind everything already waiting. */
+  private push(li: number, k: string, last: boolean): void {
+    const key = `${li}:${k}`;
+    if (this.queued.has(key)) {
+      if (!last) return;
+      this.queue.splice(this.queue.findIndex((q) => q.li === li && q.k === k), 1);
+    }
+    this.queued.add(key);
+    this.queue.push({ li, k });
+  }
+
+  private runNext(): boolean {
+    const { li, k } = this.queue.shift()!;
+    this.queued.delete(`${li}:${k}`);
+    if (!this.wanted(li, k)) return false; // passed by before its turn came
+    const L = LEVELS[li], tiles = this.tiles[li];
+    const [i, j] = k.split(",").map(Number);
+    const fresh = !tiles.has(k);
+    const m = tiles.get(k) ?? this.pools[li].pop() ?? this.newMesh(L, li === 0);
+    this.fill(m, li, i, j);
+    if (fresh) {
+      tiles.set(k, m);
+      this.group.add(m);
+    }
+    // the finer tiles left behind here can go now: this ground has risen under them
+    if (li > 0) for (const fk of this.children(li, k)) if (!this.wanted(li - 1, fk)) this.drop(li - 1, fk);
+    // a new tile: the coarser ground beneath it can sink
+    if (fresh && li < LEVELS.length - 1) this.push(li + 1, this.parent(li, i, j), true);
+    return true;
+  }
+
+  private wanted(li: number, k: string): boolean {
+    const L = LEVELS[li], [cx, cz] = this.centre[li];
+    const [i, j] = k.split(",").map(Number);
+    return Math.abs(i - cx) <= L.ring && Math.abs(j - cz) <= L.ring;
+  }
+
+  private parent(li: number, i: number, j: number): string {
+    const r = LEVELS[li + 1].chunk / LEVELS[li].chunk;
+    return `${Math.floor(i / r)},${Math.floor(j / r)}`;
+  }
+
+  /** The finer tiles standing inside a tile. */
+  private children(li: number, k: string): string[] {
+    const r = LEVELS[li].chunk / LEVELS[li - 1].chunk;
+    const [i, j] = k.split(",").map(Number);
+    const out: string[] = [];
+    for (const fk of this.tiles[li - 1].keys()) {
+      const [a, b] = fk.split(",").map(Number);
+      if (Math.floor(a / r) === i && Math.floor(b / r) === j) out.push(fk);
+    }
+    return out;
+  }
+
+  /** A tile no longer wanted: it goes once the ground beneath it is rebuilt (or at once, if it
+      is the coarsest, or if the ground beneath is going too). */
+  private retire(li: number, k: string): void {
+    if (li === LEVELS.length - 1) return this.drop(li, k);
+    const [i, j] = k.split(",").map(Number);
+    const pk = this.parent(li, i, j);
+    if (this.wanted(li + 1, pk) && this.tiles[li + 1].has(pk)) this.push(li + 1, pk, true);
+    else if (!this.wanted(li + 1, pk)) {
+      /* the parent is leaving too: its own retirement takes this one with it */
+    } else this.drop(li, k); // nothing beneath yet (it's being built): nothing to wait for
+  }
+
+  private drop(li: number, k: string): void {
+    const m = this.tiles[li].get(k);
+    if (!m) return;
+    if (li > 0) for (const fk of this.children(li, k)) if (!this.wanted(li - 1, fk)) this.drop(li - 1, fk);
+    this.group.remove(m);
+    this.pools[li].push(m);
+    this.tiles[li].delete(k);
+  }
+
+  /** Whether the finer level stands (and stays) over this spot, so this level may sink here. */
+  private coveredBelow(li: number, x: number, z: number): boolean {
+    const L = LEVELS[li - 1], tiles = this.tiles[li - 1];
+    for (const dx of [-0.01, 0.01])
+      for (const dz of [-0.01, 0.01]) {
+        const k = `${Math.floor((x + dx) / L.chunk)},${Math.floor((z + dz) / L.chunk)}`;
+        if (!tiles.has(k) || !this.wanted(li - 1, k)) return false;
+      }
+    return true;
+  }
+
+  private newMesh(L: Level, isNear: boolean): THREE.Mesh {
+    const g = new THREE.PlaneGeometry(L.chunk, L.chunk, L.seg, L.seg);
+    g.rotateX(-Math.PI / 2);
+    const n = g.attributes.position.count;
+    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    g.setAttribute("aGround", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    const m = new THREE.Mesh(g, this.material);
+    m.receiveShadow = isNear;
+    m.frustumCulled = true;
+    return m;
+  }
+
+  private fill(m: THREE.Mesh, li: number, i: number, j: number): void {
+    const L = LEVELS[li];
+    const ox = (i + 0.5) * L.chunk, oz = (j + 0.5) * L.chunk;
+    m.position.set(ox, 0, oz);
+    const g = m.geometry as THREE.BufferGeometry;
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const nor = g.attributes.normal as THREE.BufferAttribute;
+    const col = g.attributes.color as THREE.BufferAttribute;
+    const gr = g.attributes.aGround as THREE.BufferAttribute;
+    const n = L.seg + 1, B = 4; // a border of four cells, for normals and the sky-seen shading
+    const W = n + 2 * B;
+    const step = L.chunk / L.seg;
+    const H = new Float32Array(W * W);
+    for (let b = 0; b < W; b++)
+      for (let a = 0; a < W; a++) H[b * W + a] = heightAt(ox + ((a - B) - L.seg / 2) * step, oz + ((b - B) - L.seg / 2) * step);
+    for (let v = 0; v < pos.count; v++) {
+      const a = (v % n) + B, b = Math.floor(v / n) + B;
+      const lx = (a - B - L.seg / 2) * step, lz = (b - B - L.seg / 2) * step;
+      const x = ox + lx, z = oz + lz;
+      const h = H[b * W + a];
+      // hidden beneath the near tiles?
+      const sunk = li > 0 && this.coveredBelow(li, x, z);
+      pos.setXYZ(v, lx, sunk ? h - 40 : h, lz);
+      const dx = H[b * W + a - 1] - H[b * W + a + 1], dz = H[(b - 1) * W + a] - H[(b + 1) * W + a];
+      const inv = 1 / Math.hypot(dx, 2 * step, dz);
+      nor.setXYZ(v, dx * inv, 2 * step * inv, dz * inv);
+      // how much sky this spot sees: hollows darker, crests a little brighter
+      let avg = 0;
+      for (const [da, db] of [[-B, 0], [B, 0], [0, -B], [0, B], [-2, -2], [2, 2], [-2, 2], [2, -2]]) avg += H[(b + db) * W + a + da];
+      avg /= 8;
+      const sky = Math.min(1.12, Math.max(0.5, 1 - ((avg - h) * 0.9) / Math.max(4, step * B)));
+      const k = groundKind(x, z, h);
+      const region = fbm(x * 0.004 + 9, z * 0.004 - 4);
+      this.col.copy(C.meadowA).lerp(C.meadowB, smooth(0.35, 0.6, region)).lerp(C.meadowC, smooth(0.6, 0.78, region));
+      this.col.lerp(this.tmp.copy(C.sand), k.sand).lerp(C.stone, k.stone);
+      // the mountains: bare dark rock on their steep faces (the snow is laid by the ground's shader)
+      const up = nor.getY(v);
+      const mount = smooth(25, 60, h);
+      this.col.lerp(C.granite, mount * smooth(0.9, 0.62, up));
+      // broad stretches of bare earth, warm and deeply textured
+      const earth = smooth(0.42, 0.62, fbm(x * 0.005 + 123, z * 0.005 - 7)) * (1 - k.sand) * smooth(0.6, 2.5, h);
+      this.tmp.copy(C.earth).lerp(C.loam, smooth(0.3, 0.7, fbm(x * 0.03 - 9, z * 0.03 + 4)));
+      this.col.lerp(this.tmp, earth * 0.8);
+      if (h < 0.1) this.col.lerp(C.wet, smooth(0.1, -0.6, h));
+      col.setXYZ(v, this.col.r, this.col.g, this.col.b);
+      const sandy = Math.min(1, k.sand + smooth(0.45, 0.62, fbm(x * 0.01 - 30, z * 0.01 + 12)) * (1 - k.stone) * 0.6);
+      // the earth takes the rock scan's grit and the sand's grain
+      const rocky = Math.min(1 - sandy, k.stone + smooth(0.5, 1.0, 1 - nor.getY(v)) * 0.8 + earth * 0.55);
+      gr.setXYZ(v, sky, Math.min(1 - rocky, sandy + earth * 0.3), rocky);
+    }
+    pos.needsUpdate = nor.needsUpdate = col.needsUpdate = gr.needsUpdate = true;
+    g.computeBoundingSphere();
+    g.computeBoundingBox();
+  }
+}

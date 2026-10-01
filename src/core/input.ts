@@ -1,0 +1,280 @@
+/* Input: keyboard + mouse on desktop. On touch: a classic 360° joystick that rests in the
+   bottom-left corner, look-drag anywhere else, and one round button, as in Sky and Genshin:
+   - a thumb landing anywhere in the lower left takes the stick: it comes to the thumb (a
+     floating stick is quicker to find than a fixed one), and goes home when let go;
+   - the inner half of the stick walks, as gently as the thumb pushes; further out the walk
+     rises smoothly into a run (the ring turns gold), with no sudden step between them;
+   - tap the round button to jump, and tap again in the air to take off; hold it to take off
+     and rise; flying, a tap is a wingbeat; let go to glide down;
+   - one small word appears only when it helps: "Land" in the air, "Dive" on the water,
+     "Floor" under it (down to the lake floor), "Surface" going down or on the floor;
+   - in the water the round button means up: at the surface a tap dives (hold flies out), under
+     it a tap lifts a little and holding rises; a double tap on the orb goes down to the floor. */
+
+export class Input {
+  move = { x: 0, y: 0 };
+  glide = false;
+  /** Accumulated look deltas in pixels since last read. */
+  lookX = 0;
+  lookY = 0;
+  zoom = 1;
+  onAction: (() => void) | null = null;
+  /** Space or the round button is being held (for gliding). */
+  get hold(): boolean {
+    return this.enabled && (this.keys.has(" ") || this.actHeld);
+  }
+  private actHeld = false;
+  /** Run: Shift, or the thumb pushed out past the stick's inner half. */
+  get boost(): boolean {
+    return this.enabled && this.glide;
+  }
+  /** How far into a run, 0..1 (Shift is a full run; the stick rises into it smoothly). */
+  run = 0;
+  /** Sink (in the water, while held): C or Ctrl. */
+  get descend(): boolean {
+    return this.enabled && (this.keys.has("c") || this.keys.has("control"));
+  }
+  /** The context word ("Land" in the air, "Dive" on the water, "Surface" under it): tapping it,
+      or pressing L (or C in the air). */
+  onLand: (() => void) | null = null;
+  /** A finger (or the mouse) held still in one place for a moment. */
+  /** The keyboard's way to press the heart (H). */
+  onHeart: (() => void) | null = null;
+  onHold: ((x: number, y: number) => void) | null = null;
+  private holdTimer = 0;
+  /** A short tap or click without dragging (`touch` for a finger). */
+  onTap: ((x: number, y: number, touch: boolean) => void) | null = null;
+  private downAt = new Map<number, { x: number; y: number; t: number }>();
+  touchUsed = false;
+  enabled = false;
+  /** In the water, C sinks rather than calling the context word. */
+  inWater = false;
+
+  private keys = new Set<string>();
+  private joyId: number | null = null;
+  private joyCenter = { x: 0, y: 0 };
+  private joyR = 56;
+  private joyVec = { x: 0, y: 0 };
+  private joyRun = 0;
+  private lookId: number | null = null;
+  private lookLast = { x: 0, y: 0 };
+  private mouseDown = false;
+  private pinch: { a: number; b: number; d: number } | null = null;
+  private pointers = new Map<number, { x: number; y: number }>();
+
+  constructor(
+    private surface: HTMLElement,
+    private joyEl: HTMLElement,
+    private knobEl: HTMLElement,
+    actionBtn: HTMLElement,
+    ctxBtn?: HTMLElement,
+  ) {
+    // the context word: tapped
+    if (ctxBtn) {
+      ctxBtn.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.enabled) this.onLand?.();
+      });
+      ctxBtn.addEventListener("click", (e) => e.detail === 0 && this.enabled && this.onLand?.());
+    }
+    addEventListener("keydown", (e) => {
+      if (!this.enabled || (e.target as HTMLElement)?.closest?.("#menu")) return;
+      const k = e.key.toLowerCase();
+      if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
+      if (k === " " && !e.repeat) this.onAction?.();
+      if (k === "h" && !e.repeat) this.onHeart?.();
+      if ((k === "l" || (k === "c" && !this.inWater)) && !e.repeat) this.onLand?.();
+      this.keys.add(k);
+    });
+    addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
+    addEventListener("blur", () => this.keys.clear());
+
+    surface.addEventListener("pointerdown", (e) => this.down(e));
+    surface.addEventListener("pointermove", (e) => this.moveP(e));
+    surface.addEventListener("pointerup", (e) => this.up(e));
+    surface.addEventListener("pointercancel", (e) => this.up(e));
+    surface.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      this.zoom *= Math.exp(e.deltaY * 0.001);
+    }, { passive: false });
+
+    for (const ev of ["pointerup", "pointercancel", "pointerleave"]) actionBtn.addEventListener(ev, () => (this.actHeld = false));
+    actionBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.actHeld = true;
+      if (this.enabled) this.onAction?.();
+    });
+    actionBtn.addEventListener("click", (e) => {
+      // Keyboard activation of the button (pointer taps were handled on pointerdown).
+      if (e.detail === 0 && this.enabled) this.onAction?.();
+    });
+  }
+
+  private down(e: PointerEvent): void {
+    if (!this.enabled) return;
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.downAt.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+    window.clearTimeout(this.holdTimer);
+    const hx = e.clientX, hy = e.clientY, id = e.pointerId;
+    // held still (not on the stick, not a pinch): a long press
+    this.holdTimer = window.setTimeout(() => {
+      if (this.pointers.size === 1 && this.pointers.has(id) && id !== this.joyId) this.onHold?.(hx, hy);
+    }, 750);
+    this.surface.setPointerCapture?.(e.pointerId);
+    if (e.pointerType === "touch") {
+      this.touchUsed = true;
+      this.joyEl.hidden = false; // a touch screen that didn't say so (a touch laptop): show the stick
+      if (this.pointers.size === 2 && this.joyId === null) {
+        const [a, b] = [...this.pointers.keys()];
+        this.pinch = { a, b, d: this.pinchDist() };
+        this.lookId = null;
+        return;
+      }
+      // the stick: a touch on it (or just around it) takes it, and the knob goes straight to the
+      // thumb; a touch anywhere else in the lower left brings the whole stick to the thumb
+      if (this.joyId === null && !this.joyEl.hidden) {
+        this.joyEl.style.transition = "none";
+        this.joyEl.style.transform = "";
+        const r = this.joyEl.getBoundingClientRect();
+        const home = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        this.joyR = r.width / 2 - 8;
+        const near = Math.hypot(e.clientX - home.x, e.clientY - home.y) < r.width * 0.85;
+        const zone = e.clientX < innerWidth * 0.45 && e.clientY > innerHeight * 0.4;
+        if (near || zone) {
+          this.joyId = e.pointerId;
+          if (near) this.joyCenter = home;
+          else {
+            const m = r.width / 2 + 6;
+            this.joyCenter = {
+              x: Math.min(Math.max(e.clientX, m), innerWidth - m),
+              y: Math.min(Math.max(e.clientY, m), innerHeight - m),
+            };
+            this.joyEl.style.transform = `translate(${this.joyCenter.x - home.x}px, ${this.joyCenter.y - home.y}px)`;
+          }
+          this.stick(e.clientX, e.clientY);
+          this.joyEl.classList.add("held");
+          return;
+        }
+      }
+      if (this.lookId === null) {
+        this.lookId = e.pointerId;
+        this.lookLast = { x: e.clientX, y: e.clientY };
+      }
+    } else {
+      this.mouseDown = true;
+      this.lookLast = { x: e.clientX, y: e.clientY };
+    }
+  }
+
+  private pinchDist(): number {
+    const p = [...this.pointers.values()];
+    return p.length < 2 ? 1 : Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+  }
+
+  private moveP(e: PointerEvent): void {
+    if (!this.pointers.has(e.pointerId)) return;
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const d0 = this.downAt.get(e.pointerId);
+    if (d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > 12) window.clearTimeout(this.holdTimer);
+    if (this.pinch) {
+      const d = this.pinchDist();
+      this.zoom *= this.pinch.d / Math.max(1, d);
+      this.pinch.d = d;
+      return;
+    }
+    if (e.pointerId === this.joyId) {
+      this.stick(e.clientX, e.clientY);
+      return;
+    }
+    if (e.pointerId === this.lookId || (e.pointerType !== "touch" && this.mouseDown)) {
+      this.lookX += e.clientX - this.lookLast.x;
+      this.lookY += e.clientY - this.lookLast.y;
+      this.lookLast = { x: e.clientX, y: e.clientY };
+    }
+  }
+
+  /** Move the stick's knob toward the thumb: full 360°, analog, with a small rest in the middle
+      (scaled, so movement starts smoothly from nothing rather than with a jolt). The inner half
+      walks from a gentle step to a full walk; beyond it the walk rises into a run. */
+  private stick(x: number, y: number): void {
+    const R = this.joyR;
+    let dx = x - this.joyCenter.x, dy = y - this.joyCenter.y;
+    const d = Math.hypot(dx, dy);
+    if (d > R) {
+      dx *= R / d;
+      dy *= R / d;
+    }
+    const m = Math.min(1, d / R), dead = 0.1, walked = 0.5;
+    const walk = m < dead ? 0 : Math.min(1, (m - dead) / (walked - dead));
+    const k = walk / Math.max(m, 1e-6);
+    this.joyVec = { x: (dx / R) * k, y: (-dy / R) * k };
+    const t = Math.min(1, Math.max(0, (m - 0.55) / 0.35));
+    this.joyRun = t * t * (3 - 2 * t);
+    this.knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    this.joyEl.classList.toggle("run", this.joyRun > 0.5);
+  }
+
+  private up(e: PointerEvent): void {
+    window.clearTimeout(this.holdTimer);
+    const d = this.downAt.get(e.pointerId);
+    this.downAt.delete(e.pointerId);
+    if (d && this.enabled && !this.pinch && e.type === "pointerup" && this.pointers.size <= 1 && e.pointerId !== this.joyId &&
+        Math.hypot(e.clientX - d.x, e.clientY - d.y) < 10 && performance.now() - d.t < 350) {
+      this.onTap?.(e.clientX, e.clientY, e.pointerType === "touch");
+    }
+    this.pointers.delete(e.pointerId);
+    if (this.pinch && (e.pointerId === this.pinch.a || e.pointerId === this.pinch.b)) this.pinch = null;
+    if (e.pointerId === this.joyId) {
+      this.joyId = null;
+      this.joyVec = { x: 0, y: 0 };
+      this.joyRun = 0;
+      this.knobEl.style.transform = "translate(-50%,-50%)";
+      this.joyEl.classList.remove("held", "run");
+      // home again, gently
+      this.joyEl.style.transition = "transform 0.2s ease-out";
+      this.joyEl.style.transform = "";
+    }
+    if (e.pointerId === this.lookId) this.lookId = null;
+    if (e.pointerType !== "touch") this.mouseDown = false;
+  }
+
+  /** Resolve the current movement intent. Call once per frame. */
+  poll(): void {
+    const k = this.keys;
+    let x = 0, y = 0;
+    if (k.has("w") || k.has("arrowup")) y += 1;
+    if (k.has("s") || k.has("arrowdown")) y -= 1;
+    if (k.has("d") || k.has("arrowright")) x += 1;
+    if (k.has("a") || k.has("arrowleft")) x -= 1;
+    const kb = x !== 0 || y !== 0;
+    if (kb) {
+      const l = Math.hypot(x, y);
+      this.move = { x: x / l, y: y / l };
+      this.glide = k.has("shift");
+      this.run = this.glide ? 1 : 0;
+    } else {
+      this.move = { ...this.joyVec };
+      // pushing the thumb out past the inner half rises into a run
+      this.run = this.joyRun;
+      this.glide = this.joyRun > 0.5;
+    }
+    if (!this.enabled) {
+      this.move = { x: 0, y: 0 };
+      this.glide = false;
+      this.run = 0;
+    }
+  }
+
+  takeLook(): [number, number] {
+    const r: [number, number] = [this.lookX, this.lookY];
+    this.lookX = this.lookY = 0;
+    return r;
+  }
+  takeZoom(): number {
+    const z = this.zoom;
+    this.zoom = 1;
+    return z;
+  }
+}

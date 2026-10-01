@@ -1,0 +1,160 @@
+# Playtest: the open world
+
+## How to run
+- **Online:** https://vy6ycr7tcc-debug.github.io/Animation/ (updates about a minute after each merge into `main`).
+- **Locally:** `npm install`, then `npm run dev`. Open the "Network" URL on your phone (same Wi-Fi).
+- To see what your phone chose (renderer, fps, quality tier, resolution, render scale), tap ⋮ five times quickly, or add `#stats` to the URL. Tap five times again to hide it.
+
+## Controls
+A stick in the bottom-left corner and one round button in the bottom-right, as in Sky and Genshin. Put your thumb down anywhere in the lower left and the stick comes to it. One small word appears beside the button only when it helps.
+
+| | Phone | Keyboard + mouse |
+|---|---|---|
+| Set course for a place | Tap it: the wanderer walks there (runs if it's far), or flies there in the air. Push the stick to take over | Click it |
+| Walk freely | The stick, bottom left (or wherever your thumb lands in the lower left): push it any way, 360°, gently to stroll | W A S D or arrow keys |
+| Run | Push the stick further: past its inner half the walk rises smoothly into a run (its ring turns gold) | Hold Shift |
+| Glide | Run off a slope | Run off a slope |
+| Jump | Tap the round button | Tap Space |
+| Fly | Tap it again in the air, or hold it: you become a shifting geometric being (a faceted core inside turning solids), take off and keep rising, faster the longer you hold. Flying, a tap is a wingbeat. Let go and you glide on, sinking gently. Land and your body forms again. | Space again in the air, or hold it |
+| Land | Tap **Land** (shows only while you're flying) | C or L |
+| Dive | On the water, tap the round button (or **Dive**): a small leap and a plunge | Tap Space, or L |
+| Swim under the water | The stick swims where you look: look down to go deeper, up to rise. Tap the round button for a stroke; hold it to rise; let go to hover | W A S D and the mouse; Space (tap: stroke, hold: rise); hold C to sink |
+| Come up | Tap **Surface**. Rising fast with the button held, you leap clear; keep holding to fly | L |
+| Fly out of the water | On the water, hold the round button | Hold Space |
+| Look around | Drag anywhere off the stick | Drag with the mouse |
+| Zoom | Pinch | Scroll wheel |
+| Genesis | Touch and hold the wanderer's heart (about a second): the world goes dark and the heart beats, with a rising cosmic music (a heartbeat, an open chord swelling, glints, far voices, and at the turn a resolution into D major); thin geometric shapes burst out of the heart (circles, triangles, hexagons, the hexagram, the seed of life, the Platonic solids) while the world's own geometry lights up as fine lines, spreading outward; then creation rebuilds itself over its lines (~30 s). Not while flying or under water | H |
+| Free flight | ⋮ → Free flight: in the air the stick flies where you look (look up to climb, down to dive); let go and you hover | the same, with the mouse |
+| The temple | Walk through the door of the pylon near the shore (on the map: "The temple"). Inside, the archetypes stand in their shrines: the Mind on the left, the Body on the right, the Spirit in the sanctuary beyond the gateway, the Choice at its centre. Inside it is still: the hollow hum of the stone hall, air moving high above, a drop of water far off, now and then a singing bowl, and a far chant. Each archetype moves in its own way, from its card. Stand before a shrine (by its small lamp) and a panel offers: **Be with it** (a rite: you face it, it makes its gesture and you make it with it, while an invitation, what it is, and a question to carry are spoken; then its lamp is lit), or hear it: "Who are you?", its teaching, its practice. Move to end a rite. Light a place in all three realms (I, VIII, XV; II, IX, XVI; …) and the altar answers; light all twenty-one and the Choice opens. At the centre of the sanctuary, tap "The cards" by the altar: all 22 archetypes as 3D cards; ‹ › or swipe to turn them, tap a numeral to jump. Walk out through the door you came in by (behind you as you enter), or tap "Leave the temple" near the door (also in ⋮), or travel from ⋮ → Map | the same; ← → for the cards, Esc to leave them |
+| Lay hands on the world | Touch and hold (about a second) a tree, a rock, a crystal or the open ground: a ring shows where your finger rests, and the wanderer goes there and embraces the tree, kneels and bows until the palm lies on the soil, or lays both palms on the stone. Then a slow conversation, one breath at a time: fine gold light flows from the hands into it, it answers in its own note and light (a tree's light rises into the crown and runs out along the roots; a stone's rings race over it; the earth gathers light toward the palm), and its light flows back into the hands. Move the stick or tap elsewhere to let go | T (touches what's just ahead; T again lets go) |
+| The deep | Under the lakes: ruins of a lost Atlantean city in Egyptian stone (after Samuel's pictures): a round temple of papyrus columns and arches under a ribbed terracotta dome half fallen in; a leaning tower with a loggia of arches, a ribbed dome and cupola; two arcades facing across a long pool, domed pavilions at its ends and an obelisk; flowing pearl-champagne terraces stacked in rings; a row of tall polished arches and a broken lattice of pale stone. A mother-of-pearl sheen and faint channels of shifting colour run through the stone, and beside each a pale ring on the floor. Rest inside a ring (let go: under the water you sink gently) and the sea hushes and a question rises. In the steep underwater slopes, arches of stone with light inside them: swim through one into the **Archive of the Deeper Self**, a grotto whose walls hold a tablet for every narration of the archive (those you've heard glow: tap to hear again) and an alcove for each archetype (those you've met hold their light: tap to hear its voice). A ring of stillness at the centre. Swim back into the light you came through, or tap "Return to the lake". On the map, under "Beneath the water": every ruin by name, and "The way to the deep archive" (a great round stone door rolled half aside, light in the gap) | the same (click to hear) |
+| The vision of creation | Near the shore (on the map: "The vision of creation"): thousands of points of light standing on the ground, one flowing body that gathers into each form of creation in turn and swirls loose into the next, on a loop: atom, stone, crystal, molecule, plant, horse, primate, human, six figures in a ring, a sphere of unity, one point, and the burst that begins it again | the same |
+| The pyramid | After what Ra says of the Great Pyramid (on the map: "The pyramid"). Pale casing whose stone courses carry a slow living light, a rose-granite capstone, light drawn in at its base spiralling up the faces, and above the apex a soft flame of light (the third spiral). Climb its faces to the apex, or go in by the door on the north face. Inside: the resonating chamber below (a deep hum rises at its open pit); the Queen's Chamber (stand at its centre and be still: everything goes dark and silent but your heartbeat, then a point of light grows and the world returns); the Grand Gallery rising to the King's Chamber (stand in the coffer and be still: light moves up through you in seven colours, red to violet, each with its note, and the crystal above answers). Walk out the door, or "Leave the pyramid" | the same |
+| Loading | A turning seed of light in the middle of the screen whenever something is on its way: crossing into a place, a journey from the map, the land arriving after a long flight, a recording loading | the same |
+| Autofly | ⋮ → Autofly: the wanderer flies by itself, low over the land and lakes from grove to home, then up among the planets and stars, then down again somewhere new. Touch the stick or the button to take over | P |
+| Sit with an archetype, stand up | Tap "Sit with…" | E |
+| Hear an orb or a fruit | Tap it | Click it, or Enter when near |
+| Turn inward | Stand still for a moment | Stand still |
+| Settings, Map, Guide, About | ⋮ top right | Esc |
+| Ask the guide | ⋮ → Guide, or "Ask the guide" on the map | ⋮ → Guide |
+
+Leave the screen untouched for a few seconds (or turn on Autofly) and the controls and the player fade away, leaving only the world; touch anywhere and they return. The screen stays awake while you play (⋮ → Keep the screen awake). Your journey is kept on this device: where you are, and every voice you've heard, so nothing repeats.
+
+## What it is
+It begins in the dark: a seed of light turns, a thin gold ring spinning round it, while the world is prepared. Touch the light, and words come out of the dark one phrase at a time, spoken ("From the stillness of the heart, in the within of noise and the silence, the soul seeks to rediscover itself, experiencing creation, and the creator, all there is."), then two plain lines on what this world is, and the dark lifts like a dawn onto the night water and the title (Skip, bottom right, at any time). There is no island and no path. After "Touch the water to begin", a map unfolds: the land drawn in gold contour lines, with the shore and the homes of all twenty-two archetypes marked. From there you can go anywhere. ⋮ → Map lets you travel again.
+- **The map:** drag to move it; pinch, scroll or use − / + / All to come closer or see everything. Tap a place (or its name in the list below the map), or any spot on the land, and you go there. Coming back, **Continue where you were** picks up your journey. Each group has its own mark: the Mind a circle, the Body a diamond, the Spirit a triangle, the Choice a star. A wave under a mark means that home is in the deep; you wake on the water above it and dive.
+- **Where they live:** the Mind's seven around the shore where you wake; the Body's seven (VIII–XIV) out to the east; the Spirit's seven (XV–XXI) out to the west; the Choice (XXII) on a small island in the northern lake. The Moon (XVIII) and Judgement (XX) live on the floor of deep lakes, marked by a column of light and a ring on the water.
+- **The archetypes live in the world as beings you meet,** recreated from the Ra tarot cards. Each is a figure of flowing light in its own colour, posed as on its card:
+  - I, the Magician: standing, holding out a sphere of light, beside a cube with a bird of light inside;
+  - II, the High Priestess: seated before her veil, between the pillars;
+  - III, the Empress: seated in her garden, with a halo of rays and a sphere;
+  - IV, the Emperor: seated on his throne on the square of light, holding a sphere;
+  - V, the Hierophant: seated beyond the arch, with a staff of three rings and two small kneeling lights;
+  - VI, the Lovers: a figure between two veiled companions, a bow of light above;
+  - VII, the Chariot: standing in the vessel under a canopy, with a light and a dark sphinx form before it;
+  - VIII, Strength: one gentle hand, and a lion of light at rest, its mane a ring of curling light;
+  - IX, the Hermit: high on the hills, with a staff and a lamp;
+  - X, the Wheel of Fortune: before a great turning wheel, two small lights riding it, one rising, one falling;
+  - XI, Justice: seated, the scales in one hand, the sword in the other, an eight-rayed star above;
+  - XII, the Hanged Man: head down by one foot from a beam between two vine-wound pillars, above still water (drawn dashed: the archive leaves him open);
+  - XIII, Death: a long scythe of light, and a rainbow over the field;
+  - XIV, Temperance: wings and a disc of rays, pouring light from cup to cup at the water's edge;
+  - XV, the Devil: great wings, a raised torch, two small figures held by a cord loose enough to slip;
+  - XVI, the Tower: beside a tower of light whose capstone the lightning has lifted; two small lights fall;
+  - XVII, the Star: kneeling by the lake, pouring from two vessels under a star of eight points;
+  - XVIII, the Moon: in the deep, between a pale and a dark pyramid, with a dim path and the moon above;
+  - XIX, the Sun: two figures hand in hand in a ring of flowers, under a sun with curling rays;
+  - XX, Judgement: in the deep, figures of light rising from a sarcophagus toward the surface;
+  - XXI, the World: seated with a harp, under a wreath with a dove at its heart and four lights at the corners (the wreath unfinished: the archive leaves it open);
+  - XXII, the Choice: a traveller with a bindle and a flowering staff, under an eclipse, on its island.
+  - Where a card and Samuel's recorded voice differ, the being follows the voice (VIII rests a hand on a lion; XI holds the scales and the sword).
+- **When you come near a being,** it turns toward you, brightens and greets you, and it speaks, as in Samuel's Q&A package (the tunnel):
+  - **arrival:** the Mind's seven begin their journey narration; the others say who they are ("Who are you?");
+  - **step closer** (about 3 m): it speaks its teaching;
+  - **sit with it:** it speaks its practice ("How shall I work with you?") before you choose anything. In the deep you can't sit: rest still before the being instead;
+  - **walk on:** once you are some way off, the passage for the road to the next archetype is the next voice you hear.
+- **Sit with a being:** near one, tap **Sit with…** (or press E). Your wanderer walks up, a stone rises, and you sit facing it. Then choose:
+  - **Ask:** "Who are you?", "What do you teach?", "Where do I meet you in my life?" The archetype answers in Samuel's recordings (all 22 are recorded), its light shimmering as it speaks.
+  - **How is your heart right now?** Drag slowly along the gradient from shadow to light and let go. The archetype answers from the nearest of five places.
+  - **Rest in silence:** the stars come out and time slows.
+  - **Offer light:** a stream of light flows from you to it, and it answers.
+  - **Stand up,** or just move.
+- **Narration runs in the background, sparingly.** It begins with the voice of the place you chose (the shore starts with J01). The rest follow in order, each only once per journey, with a minute or two of quiet between them; when all have been heard, the narrator rests. You never have to stop and wait anywhere for it. Turn it off under ⋮ → Narration.
+- **The world answers as you pass:**
+  - grass leans away from you and keeps a faint trail of light;
+  - flowers open when you brush past, each with a note from one soft scale;
+  - butterflies drift after you for a while;
+  - light creatures glide overhead.
+- **Lanterns:** clusters of dark orbs stand in the hills. Walk close and they kindle one by one with chimes, and they stay lit between visits. Lighting them is the only "collecting" there is, and nothing depends on it.
+- **Landmarks:** six of the geometric forms from the Mind stations stand out in the world. You find them by wandering. Each still reacts:
+
+  | Landmark | What happens |
+  |---|---|
+  | Beam and gold ring | Step into the ring: the beam brightens and you reach upward. |
+  | Two pillars and mist | Stand still a moment: time slows, the mist parts, more stars appear. |
+  | Spiral garden | Walk the spiral inward: rising tones, then a bloom at the centre. |
+  | Throne on a square of light | Stand still: constellations gather overhead. |
+  | Arch of three stones | Walk through: a ripple and a low tone. |
+  | Two crossing rings | Walk to the crossing: the rings pulse. |
+
+- **Stillness:** stop and stay still. The wanderer turns inward, head bowed and hands together at the heart, and a small warm light breathes there. Long, soft strokes of light wind in from the trees, crystals and archetypes, melt into the aura, and a few flow out into the world; slow swells of light travel along them. The network of roots lights up. The spirits gather, and the horses come near. Move, and it all dissolves.
+- **Under the water:** the lakes are deep now (tens of metres). Tap to dive, then swim where you look.
+  - Light is absorbed as it travels, red first, so the far water turns teal and then indigo, darker the deeper you go. Moonlight falls in slow shafts that stay put as you swim through them. Looking up you see the sky through a bright, rippling window. Your orb is a lantern in the murk.
+  - Kelp sways and parts around you, with specks of light rising up it; caustics dance on the floor; marine snow drifts past; bubbles rise from your strokes. The world's sounds are muffled; the voices stay clear.
+  - Fish swim in schools, and mantas, dolphins and, in the deepest water, a whale. They glow softly and part around your light.
+- **Creatures:** herds of light horses roam the meadows in slow, dreamlike gallops. Run at them and they wheel away; stand still and they come close. Storks, flamingos and parrots wheel overhead.
+- **Stones that answer:** stop in front of a rock or crystal. It vibrates light outward, with waves racing over its surface and motes streaming off it.
+- **The archive's planets, stars, crystals and groves:** great ringed planets hang low in the sky, and stars carry voices high overhead (fly up to them). Great trees stand in groves, each bearing glowing fruits; in stony places the grove is a garden of crystals, one crystal for each voice. Nothing starts by itself: when the journey's voices have all been heard, a quiet word now and then says where another is waiting.
+  - Come near and a quiet label shows the title, the entity and the date.
+  - Tap a planet (from the ground below it), a star, a fruit or a crystal to hear its narration. It streams, so it starts at once. A small card appears top right with pause, back 15 s, next, source, fold and close, and you keep exploring. It folds itself after a few seconds into a half-moon hanging from the top edge beside ⋮: back 15 s, play/pause in the middle, next, and the card again below, its curve filling as the narration goes.
+  - When one ends the next follows by itself, in the archive's own order, those not yet heard first. Lock the phone and walk away: it keeps playing, one after another, with play/pause, back and next on the lock screen.
+  - While it plays, the voice it comes from (Ra, Q'uo, Hatonn, Latwii and others) stands beside you as a figure of light in its own colour and form, and fades when it ends.
+  - When a narration ends, choose "Continue with background narration" or "Just the music".
+- **The guide:** ⋮ → Guide (or "Ask the guide" on the map). Choose somewhere new, an archetype, a grove or an orb, then "Walk with the guide" (a warm light goes ahead and waits for you) or "Take me there".
+  - 86 narrations in all: 8 orbs (episodes 1–8) and 18 groves holding episodes 9–86.
+- **The whole creation:**
+  - **Trees of light,** grown in smooth curves, with twigs that curl into spirals, in groves with open meadow between. Pulses of light run down from the crown through the trunk. Under the ground you can see the roots as fine lines of light going deep, brightest near you.
+  - **Rising flowers.** Tall stems of light with a leaf curled at the foot stand in drifts in the meadows. Come near and they rise out of the ground one after another, their cups opening around a small light, a thread of light running up each stem; some while after you've gone they sink back to rest.
+  - **Tall grass, palms, caves and mountains.** Drifts of tall grass stand in the meadows and part as you wade through. Palms lean over the beaches, their fronds curling into spirals. Caves open into steep hillsides: walk in to find crystals glowing at the back and glow-worms on the ceiling. Five snow-capped mountains rise within the world.
+  - **The sky changes as you travel.** The shore keeps its moonlit night. Walk or fly out a few hundred metres and the sky turns: east a cold winter sunrise, north-east a pale morning haze, north the deep night full of stars and galaxies, north-west dusk (red low down, deep blue above), west a violet-amber sunset, south-west a red ember sunset, south the blue hour, south-east a pink dawn.
+  - **The network.** Threads of light join the roots of neighbouring trees and crystals underground, and the same pulses travel along them.
+  - **Crystals.** The great ones take a shaft of light from the sky. Every cluster splits light into rainbow petals on the ground and shifts colour as you walk around it. Walk close and they wake.
+  - **Rocks,** etched with fine gold lines.
+  - **Spirits.** Wisps of light with trailing veils. They circle the trees and crystals, and now and then one comes to keep you company.
+  - Lanterns kindle silently.
+- Water is safe: walk in and you become an orb of light floating on the surface. Far out, mountains mark the edge of the world.
+
+## Voices
+- Only the female voice plays. The five tracks recorded in the male voice (J02, J04, J06, J08, J10) are skipped by the background narration until they're re-voiced. Meeting the Magician, Empress, Hierophant or Chariot (or starting at their place) shows their narration as subtitles only for now.
+- To re-voice them, run `sh narration/revoice-female.sh` where the `tts` CLI is installed, then commit `public/audio/female/`. The game picks the new files up automatically.
+
+## Adding the archetypes' answers
+- Each answer is one recording: `public/audio/answers/<numeral>/<id>.mp3`, for example `public/audio/answers/IV/who.mp3`. The heart-spectrum anchors are `lost`, `afraid`, `still`, `bright` and `radiant`, for example `public/audio/answers/III/radiant.mp3`.
+- Paste its words into `transcript` for that answer in `content/dialogues.json`. The subtitles follow the recording by sentence.
+- **Changing the choices:**
+  - edit `prompts` in the same file;
+  - `kind` is `question` or `feeling`;
+  - an archetype can have its own list.
+- Until a recording exists, the answer shows its transcript, or a placeholder line, as subtitles.
+
+## Known issues
+- Subtitle timings were aligned automatically to pauses in each recording, so a line may change a moment early or late.
+- The narration talks about places that don't match where you are. This waits on Samuel's map drawing.
+- When the camera passes through a tree, the tree dissolves into a fine stipple.
+- ⋮ → Begin again (tap twice) forgets the lit lanterns and starts over.
+
+## Performance
+- Measured only in a headless software renderer here, which says nothing about a phone. Please send the `#stats` readings from the iPhone.
+- About 180–240 draw calls and 190–230k triangles in the headless test (medium quality).
+- The world is about 8 km across. The ground streams in three levels:
+  - fine 64 m tiles within about 160 m;
+  - coarse tiles out to about 640 m;
+  - broad tiles out to about 2.5 km, seen when you fly high.
+- Trees stream out to about 100 m. Flying high draws the most, up to about 460k triangles in the headless test.
+- **The costliest effects, and when they turn off:**
+  - the ray-marched fluid body: 48 steps on the top quality level, down to 24 on the lowest;
+  - the water reflection: top two quality levels only;
+  - the god rays: top two quality levels only;
+  - the ambient occlusion (soft contact shadows): top two quality levels only.
+- Real textures and scanned rocks add about 2.2 MB to the first load.
+- The quality level drops automatically if frames run slow.
