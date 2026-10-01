@@ -1158,6 +1158,7 @@ interface Spirit {
   v: THREE.Vector3;
   home: THREE.Vector3;
   curious: number;
+  notice: number;
   size: number;
   hue: number;
   phase: number;
@@ -1170,6 +1171,9 @@ const SPIRIT_BLUE = new THREE.Color(0.8, 0.9, 1.0), SPIRIT_GOLD = new THREE.Colo
     one comes to keep the wanderer company. */
 export class Spirits {
   group = new THREE.Group();
+  /** Set by the world: a glider has come close enough to be noticed — the moment of
+      attention (item 11). Called with the spirit's position, once as the pass begins. */
+  onNotice: ((at: THREE.Vector3) => void) | null = null;
   private list: Spirit[] = [];
   private veil: THREE.Mesh;
   private heads: SpriteCloud;
@@ -1184,10 +1188,10 @@ export class Spirits {
     count = 12,
   ) {
     for (let i = 0; i < count; i++) {
-      const great = i < 2;
+      const great = i === 0; // one great glider, the rest small: few and special
       this.list.push({
         p: new V(), v: new V(), home: new V(),
-        curious: 0, size: great ? 1.6 : 0.7 + Math.random() * 0.5, hue: Math.random(), phase: Math.random() * 100,
+        curious: 0, notice: 0, size: great ? 2.4 : 0.7 + Math.random() * 0.5, hue: Math.random(), phase: Math.random() * 100,
         hist: Array.from({ length: TRAIL }, () => new V()), lastHist: 0,
       });
     }
@@ -1248,7 +1252,8 @@ export class Spirits {
     for (const s of this.list) {
       const ground = Math.max(heightAt(s.p.x, s.p.z), WATER_Y);
       const k = 0.4 / (1 + Math.max(0, s.p.y - ground - 1) * 0.4); // high in the air, it lights less
-      add(s.p.x, s.p.z, 3 + s.size * 2, s.hue > 0.75 ? SPIRIT_ROSE : s.hue > 0.4 ? SPIRIT_GOLD : SPIRIT_BLUE, k);
+      // the moment of attention swells the cast light with the same ease (item 11)
+      add(s.p.x, s.p.z, 3 + s.size * 2 + s.notice * 3, s.hue > 0.75 ? SPIRIT_ROSE : s.hue > 0.4 ? SPIRIT_GOLD : SPIRIT_BLUE, k * (1 + s.notice * 0.8));
     }
   }
 
@@ -1274,10 +1279,26 @@ export class Spirits {
     const vp = this.veil.geometry.attributes.position as THREE.BufferAttribute;
     const tp = this.veil.geometry.attributes.aTan as THREE.BufferAttribute;
     const ha = hp.array as Float32Array, va = vp.array as Float32Array, ta = tp.array as Float32Array;
+    const sa = this.heads.attrs.aSize.array as Float32Array;
+    let saDirty = false;
     const cam = camera.position, t0 = f.t;
     this.list.forEach((s, i) => {
       const far = s.p.distanceTo(f.player);
       if (s.home.lengthSq() === 0 || far > 75) this.placeNear(s, f.player);
+      // a pass near the wanderer is a moment: noticed once as it begins, then the attention
+      // eases away over seven quiet seconds (item 11)
+      if (s.notice <= 0 && far < 9) {
+        s.notice = 1;
+        this.onNotice?.(s.p);
+      } else if (s.notice > 0) {
+        s.notice = Math.max(0, s.notice - f.dt / 7);
+      }
+      // the moment swells the head-light; it rides the same ease back down
+      const want = s.size * (1 + s.notice * 0.35);
+      if (Math.abs(sa[i] - want) > 1e-3) {
+        sa[i] = want;
+        saDirty = true;
+      }
       // near the wanderer, one may decide to come along for a while
       if (far < 10 && s.curious <= 0 && Math.random() < f.dt * 0.08) s.curious = 14 + Math.random() * 16;
       s.curious -= f.dt;
@@ -1332,6 +1353,7 @@ export class Spirits {
       }
     });
     hp.needsUpdate = true;
+    if (saDirty) this.heads.attrs.aSize.needsUpdate = true;
     vp.needsUpdate = true;
     tp.needsUpdate = true;
   }

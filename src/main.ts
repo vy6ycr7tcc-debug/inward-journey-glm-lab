@@ -329,7 +329,9 @@ const creation = new Creation(sparks);
 // the forests beyond, out to half a kilometre
 const forest = new Forest(creation);
 scene.add(forest.mesh);
-const spirits = new Spirits(creation, MOBILE ? 10 : 14);
+const spirits = new Spirits(creation, MOBILE ? 3 : 5); // item 11: few and special, one great
+// when a glider's pass begins, the moment answers with sparks at its position
+spirits.onNotice = (at) => sparks.emit(at, 14, new THREE.Color(0.82, 0.9, 1), 0.9);
 scene.add(creation.group, spirits.group);
 const seaLife = new SeaLife();
 scene.add(seaLife.group);
